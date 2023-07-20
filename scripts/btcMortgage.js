@@ -16,7 +16,10 @@
         TYPE_LOAN_REQUEST = "type_loan_request",
         TYPE_LENDER_RESPONSE = "type_loan_response",
         TYPE_COLLATERAL_LOCK_REQUEST = "type_collateral_lock_request",
-        TYPE_COLLATERAL_LOCK_ACK = "type_collateral_lock_ack"
+        TYPE_COLLATERAL_LOCK_ACK = "type_collateral_lock_ack",
+        TYPE_LOAN_CLOSED_ACK = "type_loan_closed_ack",
+        TYPE_UNLOCK_COLLATERAL_REQUEST = "type_unlock_collateral_request",
+        TYPE_UNLOCK_COLLATERAL_ACK = "type_unlock_collateral_ack";
 
     const POLICIES = {}
 
@@ -316,6 +319,40 @@
         else return false;
     }
 
+    //Signed by borrower when closing the loan
+    const CLOSING_IDENTIFIER = "closing";
+    function sign_closing(privKey, loan_id, lender_sign) {
+        let borrower_floID = floCrypto.toFloID(floDapps.user.id)
+        //validate values before signing
+        if (!floCrypto.verifyPrivKey(privKey, borrower_floID))
+            throw "Invalid Private key for borrower";
+        if (typeof loan_id !== 'string' || !TXID_REGEX.test(loan_id))
+            throw "Invalid loan id";
+        //sign the value-data
+        let timestamp = Date.now();
+        let doc_array = [timestamp, CLOSING_IDENTIFIER, loan_id, lender_sign];
+        let sign_part = floCrypto.signData(doc_array.join("|"));
+        let pubKey = floCrypto.getPubKeyHex(privKey);
+        let closing_sign = [pubKey, sign_part, timestamp].join(".")
+        return closing_sign;
+    }
+
+    function verify_closingSign(closing_sign, borrower, loan_id, lender_sign) {
+        //split the signature part
+        let sign_splits = closing_sign.split('.');
+        let borrower_pubKey = sign_splits[0],
+            sign_part = sign_splits[1],
+            timestamp = sign_splits[2];
+        //validate values
+        if (!floCrypto.verifyPubKey(borrower_pubKey, borrower))
+            throw "Invalid public key";
+        //verify the signature
+        let doc_array = [timestamp, CLOSING_IDENTIFIER, loan_id, lender_sign];
+        if (floCrypto.verifySign(doc_array.join("|"), sign_part, borrower_pubKey))
+            return timestamp;
+        else return false;
+    }
+
     /*Loan Opening*/
 
     //1. B: requests collateral from coborrower
@@ -603,5 +640,136 @@
 
         })
     }
+
+    /*Loan Closing*/
+
+    //1. B: sends amount (PA + interest) to L (via USD tokens)
+    btcMortgage.repayLoan = function (loan_id, privKey) {
+        return new Promise((resolve, reject) => {
+            getLoanDetails(loan_id).then(loan_details => {
+                //calculate repayment amount
+                let policy = POLICIES[loan_details.policy_id],
+                    current_time = Date.now(),
+                    duration = yearDiff(current_time, loan_details.open_time);
+                let interest_amount = loan_details.loan_amount * policy.interest * duration;
+                let repay_amount = loan_details.loan_amount + interest_amount;
+                //repay and close the loan
+                let closing_sign = sign_closing(privKey, loan_id, loan_details.lender_sign);
+                var closing_data = stringifyLoanCloseData(loan_id, loan_details.borrower, closing_sign);
+                floTokenAPI.sendToken(privKey, repay_amount, loan_details.lender, closing_data, CURRENCY).then(closing_txid => {
+                    //send message to coborrower as reminder to unlock collateral
+                    floCloudAPI.sendApplicationData({ loan_id, closing_txid }, TYPE_LOAN_CLOSED_ACK, { receiverID: loan_details.coborrower })
+                        .then(result => resolve(result))
+                        .catch(error => reject(error))
+                }).catch(error => reject(error))
+            }).catch(error => reject(error))
+        })
+    }
+
+    //2. C: requests L or T to free collateral
+    btcMortgage.requestUnlockCollateral = function (loan_id, closing_txid, privKey) {
+        return new Promise((resolve, reject) => {
+            let coborrower_pubKey = floDapps.user.public;
+            validateLoanClosing(loan_id, closing_txid).then(loan_details => {
+                //find locker
+                let lender_pubKey = extractPubKeyFromSign(loan_details.lender_sign);
+                let locker = findLocker(coborrower_pubKey, lender_pubKey)
+                //create the tx hex and sign it
+                createUnlockCollateralTxHex(locker, loan_details.collateral_lock_id, privKey).then(unlock_tx_hex => {
+                    floCloudAPI.sendApplicationData({
+                        loan_id, closing_txid, unlock_tx_hex
+                    }, TYPE_UNLOCK_COLLATERAL_REQUEST, { receiverID: loan_details.lender })
+                        .then(result => resolve(result))
+                        .catch(error => reject(error))
+                }).catch(error => reject(error))
+            }).catch(error => reject(error))
+        })
+    }
+
+    function createUnlockCollateralTxHex(locker, collateral_lock_id, privKey) {
+        return new Promise((resolve, reject) => {
+            btcOperator.getUTXOs(locker.address).then(utxos => {
+                let collateral_utxos = utxos.filter(u => u.txid == collateral_lock_id);
+                if (!collateral_utxos.length)
+                    return reject("Collateral already unlocked");
+                btcOperator.getTx(collateral_lock_id).then(collateral_tx => {
+                    if (collateral_tx.confirmations == 0)
+                        return reject("Collateral not confirmed in blockchain"); //This should not happen, as loan will not be issued until collateral is locked with confirmations
+                    let collateral_owner = collateral_tx.inputs[0].address; //this will be coborrower's BTC id
+                    //create the tx
+                    const tx = coinjs.transaction();
+                    //estimate the fee
+                    let estimate_tx_size = BASE_TX_SIZE;
+                    estimate_tx_size += collateral_utxos.length * btcOperator.util.sizePerInput(locker.address, locker.redeemScript)
+                    estimate_tx_size += btcOperator.util.sizePerOutput(collateral_owner);
+                    btcOperator.util.get_fee_rate().then(fee_rate => {
+                        let fee_estimate = fee_rate * estimate_tx_size;
+                        //add inputs
+                        let total_input_value = 0;
+                        collateral_utxos.forEach(u => {
+                            //locker is btc bech32 multisig
+                            let s = coinjs.script();
+                            s.writeBytes(Crypto.util.hexToBytes(rs));
+                            s.writeOp(0);
+                            s.writeBytes(coinjs.numToBytes(u.value.toFixed(0), 8));
+                            script = Crypto.util.bytesToHex(s.buffer);
+                            tx.addinput(u.txid, u.vout, script, 0xfffffffd /*sequence*/); //0xfffffffd for Replace-by-fee
+                            total_input_value += u.value;
+                        });
+                        total_input_value = btcOperator.util.Sat_to_BTC; //convert from satoshi to BTC
+                        //add output
+                        let receiver_amount = total_input_value - fee_estimate;
+                        console.debug("FEE calc", total_input_value, fee_estimate, receiver_amount);
+                        tx.addoutput(collateral_owner, receiver_amount);
+                        tx.sign(privKey, 1 /*sighashtype*/);
+                        resolve(tx.serialize())
+                    }).catch(error => reject(error))
+                }).catch(error => reject(error))
+            }).catch(error => reject(error))
+        })
+    }
+
+    //3. L: unlock collateral
+    btcMortgage.unlockCollateral = function (loan_id, closing_txid, unlock_tx_hex, privKey) {
+        let lender_pubKey = floDapps.user.public;
+        validateLoanClosing(loan_id, closing_txid).then(loan_details => {
+            //find locker
+            let coborrower_pubKey = extractPubKeyFromSign(loan_details.coborrower_sign);
+            let locker = findLocker(coborrower_pubKey, lender_pubKey)
+            //verify and sign the tx
+            signUnlockCollateralTxHex(locker, loan_details.collateral_lock_id, unlock_tx_hex, privKey).then(signed_tx_hex => {
+                btcOperator.broadcastTx(signed_tx_hex).then(txid => {
+                    floCloudAPI.sendApplicationData({
+                        loan_id, closing_txid, unlock_collateral_id: txid
+                    }, TYPE_UNLOCK_COLLATERAL_ACK, { receiverID: loan_details.coborrower })
+                        .then(result => resolve(result))
+                        .catch(error => reject(error))
+                }).catch(error => reject(error))
+            }).catch(error => reject(error))
+        }).catch(error => reject(error))
+    }
+
+    function signUnlockCollateralTxHex(locker, collateral_lock_id, unlock_tx_hex, privKey) {
+        return new Promise((resolve, reject) => {
+            btcOperator.getUTXOs(locker.address).then(utxos => {
+                let collateral_utxos = utxos.filter(u => u.txid == collateral_lock_id);
+                if (!collateral_utxos.length)
+                    return reject("Collateral already unlocked");
+                btcOperator.getTx(collateral_lock_id).then(collateral_tx => {
+                    if (collateral_tx.confirmations == 0)
+                        return reject("Collateral not confirmed in blockchain"); //This should not happen, as loan will not be issued until collateral is locked with confirmations
+                    //create the tx
+                    let tx = coinjs.transaction().deserialize(unlock_tx_hex);
+                    //check inputs
+                    if (tx.ins.some(i => i.outpoint.hash !== collateral_lock_id))//vin other than this collateral is present in tx, ABORT
+                        return reject("Transaction Hex contains other/non collateral inputs");
+                    //sign the tx hex
+                    tx.sign(privKey, 1 /*sighashtype*/);
+                    resolve(tx.serialize())
+                }).catch(error => reject(error))
+            }).catch(error => reject(error))
+        })
+    }
+
 
 })(window.btcMortgage = {})
