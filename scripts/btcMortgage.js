@@ -190,7 +190,133 @@
         return details;
     }
 
-    /*Loan taking*/
+    /*Signature and verification */
+    function sign_borrower(privKey, loan_amount, policy_id, coborrower, lender) {
+        let borrower_floID = floCrypto.toFloID(floDapps.user.id),
+            coborrower_floID = floCrypto.toFloID(coborrower),
+            lender_floID = floCrypto.toFloID(lender);
+        //validate values before signing
+        if (!floCrypto.verifyPrivKey(privKey, borrower_floID))
+            throw "Invalid Private key for borrower";
+        if (typeof loan_amount !== "number" || !VALUE_REGEX.test(loan_amount))
+            throw "Invalid loan amount";
+        if (!(policy_id in POLICIES))
+            throw "Invalid Policy";
+        if (!floCrypto.validateFloID(coborrower_floID, true))
+            throw "Invalid coborrower floID";
+        if (!floCrypto.validateFloID(lender_floID, true))
+            throw "Invalid lender floID";
+        //sign the value-data
+        let timestamp = Date.now();
+        let doc_array = [timestamp, borrower_floID, coborrower_floID, lender_floID, loan_amount, policy_id];
+        let sign_part = floCrypto.signData(doc_array.join("|"));
+        let pubKey = floCrypto.getPubKeyHex(privKey);
+        let borrower_sign = [pubKey, sign_part, timestamp].join(".")
+        return borrower_sign;
+    }
+
+    function verify_borrowerSign(borrower_sign, borrower, loan_amount, policy_id, coborrower, lender) {
+        //split the signature part
+        let sign_splits = borrower_sign.split('.');
+        let borrower_pubKey = sign_splits[0],
+            sign_part = sign_splits[1],
+            timestamp = sign_splits[2];
+        let borrower_floID = floCrypto.getFloID(borrower_pubKey),
+            coborrower_floID = floCrypto.toFloID(coborrower),
+            lender_floID = floCrypto.toFloID(lender);
+        //validate values
+        if (!floCrypto.verifyPubKey(borrower_pubKey, borrower))
+            throw "Invalid public key";
+        if (typeof loan_amount !== "number" || !VALUE_REGEX.test(loan_amount))
+            throw "Invalid loan amount";
+        if (!(policy_id in POLICIES))
+            throw "Invalid Policy";
+        if (!floCrypto.validateFloID(borrower_floID, true))
+            throw "Invalid borrower floID";
+        if (!floCrypto.validateFloID(coborrower_floID, true))
+            throw "Invalid coborrower floID";
+        if (!floCrypto.validateFloID(lender_floID, true))
+            throw "Invalid lender floID";
+        //verify the signature
+        let doc_array = [timestamp, borrower_floID, coborrower_floID, lender_floID, loan_amount, policy_id];
+        if (floCrypto.verifySign(doc_array.join("|"), sign_part, borrower_pubKey))
+            return timestamp;
+        else return false;
+    }
+
+    function sign_coborrower(privKey, borrower_sign, collateral_value, collateral_lock_id) {
+        let coborrower_floID = floCrypto.toFloID(floDapps.user.id);
+        //validate values before signing
+        if (!floCrypto.verifyPrivKey(privKey, coborrower_floID))
+            throw "Invalid Private key for coborrower";
+        if (typeof collateral_value !== "number" || !VALUE_REGEX.test(collateral_value))
+            throw "Invalid collateral amount";
+        if (typeof collateral_lock_id !== 'string' || !TXID_REGEX.test(collateral_lock_id))
+            throw "Invalid collateral lock id";
+        //sign the value-data
+        let timestamp = Date.now();
+        let doc_array = [timestamp, borrower_sign, collateral_value, collateral_lock_id];
+        let sign_part = floCrypto.signData(doc_array.join("|"));
+        let pubKey = floCrypto.getPubKeyHex(privKey);
+        let coborrower_sign = [pubKey, sign_part, timestamp].join(".")
+        return coborrower_sign;
+    }
+
+    function verify_coborrowerSign(coborrower_sign, coborrower, borrower_sign, collateral_value, collateral_lock_id) {
+        //split the signature part
+        let sign_splits = coborrower_sign.split('.');
+        let coborrower_pubKey = sign_splits[0],
+            sign_part = sign_splits[1],
+            timestamp = sign_splits[2];
+        //validate values
+        if (!floCrypto.verifyPubKey(coborrower_pubKey, coborrower))
+            throw "Invalid public key";
+        if (typeof collateral_value !== "number" || !VALUE_REGEX.test(collateral_value))
+            throw "Invalid collateral amount";
+        if (typeof collateral_lock_id !== 'string' || !TXID_REGEX.test(collateral_lock_id))
+            throw "Invalid collateral lock id";
+        //verify the signature
+        let doc_array = [timestamp, borrower_sign, collateral_value, collateral_lock_id];
+        if (floCrypto.verifySign(doc_array.join("|"), sign_part, coborrower_pubKey))
+            return timestamp;
+        else return false;
+    }
+
+    function sign_lender(privKey, coborrower_sign, loan_transfer_id) {
+        let lender_floID = floCrypto.toFloID(floDapps.user.id);
+        //validate values before signing
+        if (!floCrypto.verifyPrivKey(privKey, lender_floID))
+            throw "Invalid Private key for lender";
+        if (typeof loan_transfer_id !== 'string' || !TXID_REGEX.test(loan_transfer_id))
+            throw "Invalid token transfer id";
+        //sign the value-data
+        let timestamp = Date.now();
+        let doc_array = [timestamp, coborrower_sign, loan_transfer_id];
+        let sign_part = floCrypto.signData(doc_array.join("|"));
+        let pubKey = floCrypto.getPubKeyHex(privKey);
+        let lender_sign = [pubKey, sign_part, timestamp].join(".")
+        return lender_sign;
+    }
+
+    function verify_lenderSign(lender_sign, lender, coborrower_sign, loan_transfer_id) {
+        //split the signature part
+        let sign_splits = lender_sign.split('.');
+        let lender_pubKey = sign_splits[0],
+            sign_part = sign_splits[1],
+            timestamp = sign_splits[2];
+        //validate values
+        if (!floCrypto.verifyPubKey(lender_pubKey, lender))
+            throw "Invalid public key";
+        if (typeof loan_transfer_id !== 'string' || !TXID_REGEX.test(loan_transfer_id))
+            throw "Invalid token transfer id";
+        //verify the signature
+        let doc_array = [timestamp, coborrower_sign, loan_transfer_id];
+        if (floCrypto.verifySign(doc_array.join("|"), sign_part, lender_pubKey))
+            return timestamp;
+        else return false;
+    }
+
+    /*Loan Opening*/
 
     //1. B: requests collateral from coborrower
     btcMortgage.requestLoanCollateral = function (loan_amount, policy_id, coborrower) {
