@@ -193,6 +193,79 @@
         return details;
     }
 
+
+
+    const getLoanDetails = btcMortgage.getLoanDetails = function (loan_id) {
+        return new Promise((resolve, reject) => {
+            floBlockchainAPI.getTx(loan_id).then(tx => {
+                let parsed_loan_details = parseLoanOpenData(tx.floData, tx.time);
+                validateLoanDetails(parsed_loan_details)
+                    .then(_ => resolve(parsed_loan_details))
+                    .catch(error => reject(error))
+            }).catch(error => reject(error))
+        })
+    }
+
+    const validateLoanDetails = btcMortgage.validateLoanDetails = function (loan_details) {
+        return new Promise((resolve, reject) => {
+            //validate floIDs
+            if (!floCrypto.validateFloID(loan_details.borrower))
+                return reject("Invalid borrower floID");
+            if (!floCrypto.validateFloID(loan_details.coborrower))
+                return reject("Invalid coborrower floID");
+            if (!floCrypto.validateFloID(loan_details.lender))
+                return reject("Invalid lender floID");
+            //check policy
+            if (!(loan_details.policy_id in POLICIES))
+                return reject("Policy not found");
+            //verify signatures
+            if (!verify_borrowerSign(loan_details.borrower_sign, loan_details.borrower, loan_details.loan_amount, loan_details.policy_id, loan_details.coborrower, loan_details.lender))
+                return reject("Invalid borrower signature");
+            if (!verify_coborrowerSign(loan_details.coborrower_sign, loan_details.coborrower, loan_details.borrower_sign, loan_details.collateral_value, loan_details.collateral_lock_id))
+                return reject("Invalid coborrower signature");
+            if (!verify_lenderSign(loan_details.lender_sign, loan_details.lender, loan_details.coborrower_sign, loan_details.loan_transfer_id))
+                return reject("Invalid lender signature");
+            resolve(true)
+        })
+    }
+
+    const LOAN_CLOSING_IDENTIFIER = "BTC Mortage: Loan closing";
+    function stringifyLoanCloseData(loan_id, borrower, closing_sign) {
+        return [
+            LOAN_CLOSING_IDENTIFIER,
+            "Borrower:" + floCrypto.toFloID(borrower),
+            "Loan ID:" + loan_id,
+            "Signature:" + closing_sign,
+        ].join('|');
+    }
+
+    function parseLoanCloseData(str, tx_time) {
+        let splits = str.split('|');
+        if (splits[0] !== LOAN_CLOSING_IDENTIFIER)
+            throw "Invalid Loan closing data";
+        var details = { close_time: tx_time };
+        splits.forEach(s => {
+            let d = s.split(':');
+            switch (d[0]) {
+                case "Borrower": details.borrower = d[1]; break;
+                case "Loan ID": details.loan_id = d[1]; break;
+                case "Signature": details.closing_sign = d[1]; break;
+            }
+        });
+        return details;
+    }
+
+    const getLoanClosing = btcMortgage.getLoanClosing = function (loan_id, closing_txid) {
+        return new Promise((resolve, reject) => {
+            floBlockchainAPI.getTx(closing_txid).then(tx => {
+                let parsed_loan_closing = parseLoanCloseData(tx.floData, tx.time);
+                validateLoanClosing(parsed_loan_closing)
+                    .then(_ => resolve(parsed_loan_closing))
+                    .catch(error => reject(error))
+            }).catch(error => reject(error))
+        })
+    }
+
     /*Signature and verification */
     function sign_borrower(privKey, loan_amount, policy_id, coborrower, lender) {
         let borrower_floID = floCrypto.toFloID(floDapps.user.id),
@@ -352,6 +425,10 @@
             return timestamp;
         else return false;
     }
+
+    const validateRequest = btcMortgage.validateRequest = {};
+
+    const RequestValidationError = (req_type, message) => { req_type, message };
 
     /*Loan Opening*/
 
