@@ -329,6 +329,10 @@
         })
     }
 
+    const validateLoanClosing = btcMortgage.validateLoanClosing = function (loan_id, closing_txid) {
+        //TODO
+    }
+
     /*Signature and verification */
     function sign_borrower(privKey, loan_amount, policy_id, coborrower, lender) {
         let borrower_floID = floCrypto.toFloID(floDapps.user.id),
@@ -546,8 +550,11 @@
                 borrower, coborrower,
                 loan_amount, policy_id
             }, TYPE_LOAN_COLLATERAL_REQUEST, { receiverID: coborrower })
-                .then(result => resolve(result))
-                .catch(error => reject(error))
+                .then(result => {
+                    let vc = Object.keys(result)[0];
+                    compactIDB.addData("outbox", result[vc], vc);
+                    resolve(result);
+                }).catch(error => reject(error))
         })
     }
 
@@ -598,8 +605,11 @@
                                 quantity: collateral_value
                             }
                         }, TYPE_LOAN_REQUEST)
-                            .then(result => resolve(result))
-                            .catch(error => reject(error))
+                            .then(result => {
+                                let vc = Object.keys(result)[0];
+                                compactIDB.addData("outbox", result[vc], vc);
+                                resolve(result);
+                            }).catch(error => reject(error))
                     }).catch(error => reject(error))
                 }).catch(error => reject(error))
             }).catch(error => reject(error))
@@ -656,8 +666,11 @@
                         lender, borrower, coborrower,
                         loan_req_id
                     }, TYPE_LENDER_RESPONSE, { receiverID: borrower })
-                        .then(result => resolve(result))
-                        .catch(error => reject(error))
+                        .then(result => {
+                            let vc = Object.keys(result)[0];
+                            compactIDB.addData("outbox", result[vc], vc);
+                            resolve(result);
+                        }).catch(error => reject(error))
                 }).catch(error => reject(error))
             }).catch(error => reject(error))
         })
@@ -699,8 +712,11 @@
                     lender, borrower, coborrower,
                     lender_res_id, borrower_sign
                 }, TYPE_COLLATERAL_LOCK_REQUEST, { receiverID: collateral.provider })
-                    .then(result => resolve(result))
-                    .catch(error => reject(error))
+                    .then(result => {
+                        let vc = Object.keys(result)[0];
+                        compactIDB.addData("outbox", result[vc], vc);
+                        resolve(result);
+                    }).catch(error => reject(error))
             }).catch(error => reject(error))
         }).catch(error => reject(error))
     }
@@ -741,8 +757,11 @@
                         collateral_lock_id: collateral_txid,
                         coborrower_sign, collateral_lock_req_id
                     }, TYPE_COLLATERAL_LOCK_ACK, { receiverID: lender })
-                        .then(result => resolve(result))
-                        .catch(error => reject(error))
+                        .then(result => {
+                            let vc = Object.keys(result)[0];
+                            compactIDB.addData("outbox", result[vc], vc);
+                            resolve(result);
+                        }).catch(error => reject(error))
                 }).catch(error => reject(error))
             }).catch(error => reject(error))
         })
@@ -833,8 +852,11 @@
                 floTokenAPI.sendToken(privKey, repay_amount, loan_details.lender, closing_data, CURRENCY).then(closing_txid => {
                     //send message to coborrower as reminder to unlock collateral
                     floCloudAPI.sendApplicationData({ loan_id, closing_txid }, TYPE_LOAN_CLOSED_ACK, { receiverID: loan_details.coborrower })
-                        .then(result => resolve(result))
-                        .catch(error => reject(error))
+                        .then(result => {
+                            let vc = Object.keys(result)[0];
+                            compactIDB.addData("outbox", result[vc], vc);
+                            resolve(result);
+                        }).catch(error => reject(error))
                 }).catch(error => reject(error))
             }).catch(error => reject(error))
         })
@@ -853,8 +875,11 @@
                     floCloudAPI.sendApplicationData({
                         loan_id, closing_txid, unlock_tx_hex
                     }, TYPE_UNLOCK_COLLATERAL_REQUEST, { receiverID: loan_details.lender })
-                        .then(result => resolve(result))
-                        .catch(error => reject(error))
+                        .then(result => {
+                            let vc = Object.keys(result)[0];
+                            compactIDB.addData("outbox", result[vc], vc);
+                            resolve(result);
+                        }).catch(error => reject(error))
                 }).catch(error => reject(error))
             }).catch(error => reject(error))
         })
@@ -916,8 +941,11 @@
                     floCloudAPI.sendApplicationData({
                         loan_id, closing_txid, unlock_collateral_id: txid
                     }, TYPE_UNLOCK_COLLATERAL_ACK, { receiverID: loan_details.coborrower })
-                        .then(result => resolve(result))
-                        .catch(error => reject(error))
+                        .then(result => {
+                            let vc = Object.keys(result)[0];
+                            compactIDB.addData("outbox", result[vc], vc);
+                            resolve(result);
+                        }).catch(error => reject(error))
                 }).catch(error => reject(error))
             }).catch(error => reject(error))
         }).catch(error => reject(error))

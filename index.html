@@ -38,7 +38,7 @@
         function onLoadStartUp() {
             if (window.quick) return;
             //floDapps.addStartUpFunction('Sample', Promised Function)
-            //floDapps.setAppObjectStores({sampleObs1:{}, sampleObs2:{options{autoIncrement:true, keyPath:'SampleKey'}, Indexes:{sampleIndex:{}}}})
+            floDapps.setAppObjectStores({ lastTx: {}, policies: {}, outbox: {}, inbox: {} })
             //floDapps.setCustomPrivKeyInput( () => { FUNCTION BODY *must resolve private key* } )
             floDapps.launchStartUp().then(result => {
                 console.log(result)
