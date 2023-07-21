@@ -426,9 +426,44 @@
         else return false;
     }
 
+
+    btcMortgage.verify = {
+        borrower_sign: verify_borrowerSign,
+        coborrower_sign: verify_coborrowerSign,
+        lender_sign: verify_lenderSign,
+        closing_sign: verify_closingSign
+    }
+
     const validateRequest = btcMortgage.validateRequest = {};
 
     const RequestValidationError = (req_type, message) => { req_type, message };
+
+    /*Inbox / Board */
+
+    //list all loan requests
+    btcMortgage.listLoanRequests = function (callback = undefined) {
+        return new Promise((resolve, reject) => {
+            let options = {}
+            if (callback instanceof Function)
+                options.callback = callback;
+            floCloudAPI.requestApplicationData(TYPE_LOAN_REQUEST, options)
+                .then(result => resolve(result))
+                .catch(error => reject(error))
+        })
+    }
+
+    //view responses 
+    btcMortgage.viewMyInbox = function () {
+        return new Promise((resolve, reject) => {
+            let options = { receiverID: floDapps.user.id }
+            if (callback instanceof Function)
+                options.callback = callback;
+            floCloudAPI.requestApplicationData(null, options)   //view all inbox
+                .then(result => resolve(result))
+                .catch(error => reject(error))
+        })
+    }
+
 
     /*Loan Opening*/
 
