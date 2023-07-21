@@ -3,7 +3,10 @@
 
     //USERS: B: Borrower, L: Lender, C: Collateral provider, T: Trusted banker (us)
 
-    var BankerPubKey = "0257a9c47462fe89b159daa204ddb964c9b098a020641cc8090a9cad4f6dd2172a";
+    const APP_NAME = "BTCMortgage";
+    const APP_IDENTIFIER = "BTC Mortgage";
+    const BANKER_ID = "";
+    const BANKER_PUBKEY = "";
 
     const CURRENCY = "USD";
 
@@ -107,7 +110,7 @@
     }
 
     function findLocker(coborrower_pubKey, lender_pubKey) {
-        return btcOperator.multiSigAddress([coborrower_pubKey, lender_pubKey, BankerPubKey], 2);
+        return btcOperator.multiSigAddress([coborrower_pubKey, lender_pubKey, BANKER_PUBKEY], 2);
     }
 
     function extractPubKeyFromSign(sign) {
@@ -137,8 +140,70 @@
         });
     }
 
+    //function to read all policy from blockchain
+    function readPoliciesFromBlockchain() {
+        return new Promise((resolve, reject) => {
+            const LASTTX_IDB_KEY = APP_NAME + ":" + BANKER_ID
+            compactIDB.readData("lastTx", LASTTX_IDB_KEY).then(lastTx => {
+                var query_options = { sentOnly: true, tx: true, filter: d => d.startsWith(APP_IDENTIFIER) };
+                if (typeof lastTx == 'number')  //lastTx is tx count (*backward support)
+                    query_options.ignoreOld = lastTx;
+                else if (typeof lastTx == 'string') //lastTx is txid of last tx
+                    query_options.after = lastTx;
+                floBlockchainAPI.readData(BANKER_ID, query_options).then(result => {
+                    let p = [];
+                    for (var i = result.items.length - 1; i >= 0; i--) {
+                        let t = result.items[i];
+                        if (t.data.startsWith(LOAN_POLICY_IDENTIFIER)) {
+                            let policy_id = t.txid,
+                                policy_details = parsePolicyData(t.data, t.time);
+                            p.push(compactIDB.addData("policies", policy_details, policy_id));
+                        }
+                    }
+                    Promise.all(p).then(result => {
+                        compactIDB.writeData("lastTx", result.lastItem, LASTTX_IDB_KEY);
+                        compactIDB.readAllData("policies").then(result => {
+                            for (let p in result)
+                                POLICIES[p] = result[p];
+                            resolve(POLICIES);  //MAYBE: resolve a copy of it?
+                        })
+                    }).catch(error => reject(error))
+                }).catch(error => reject(error))
+            }).catch(error => reject(error))
+        })
+    }
+
+    //Policy details 
+    const LOAN_POLICY_IDENTIFIER = APP_IDENTIFIER + ": Loan policy";
+    function stringifyPolicyData(duration, interest, pre_liquidation_threshold, loan_collateral_ratio) {
+        return [
+            LOAN_POLICY_IDENTIFIER,
+            "Duration:" + decodePeriod(duration),
+            "Interest per annum:" + interest,
+            "Pre-Liquidation threshold:" + pre_liquidation_threshold,
+            "Loan to Collateral ratio:" + loan_collateral_ratio
+        ].join('|');
+    }
+
+    function parsePolicyData(str, tx_time) {
+        let splits = str.split('|');
+        if (splits[0] !== LOAN_POLICY_IDENTIFIER)
+            throw "Invalid Loan Policy data";
+        var details = { policy_creation_time: tx_time };
+        splits.forEach(s => {
+            let d = s.split(':');
+            switch (d[0]) {
+                case "Duration": details.duration = encodePeriod(d[1]); break;
+                case "Interest per annum": details.interest = parseFloat(d[1]); break;
+                case "Pre-Liquidation threshold": details.pre_liquidation_threshold = parseFloat(d[1]); break;
+                case "Loan to Collateral ratio": details.loan_collateral_ratio = parseFloat(d[1]); break;
+            }
+        });
+        return details;
+    }
+
     //Loan details on FLO blockchain
-    const LOAN_DETAILS_IDENTIFIER = "BTC Mortage: Loan details";
+    const LOAN_DETAILS_IDENTIFIER = APP_IDENTIFIER + ": Loan details";
 
     function stringifyLoanOpenData(
         borrower, loan_amount, policy_id,
@@ -161,10 +226,10 @@
             "Signature-L:" + lender_sign
         ].join('|');
         /*MAYDO: Maybe make it a worded sentence?
-            BTC Mortage: 
+            BTC Mortgage: 
             L#${lender_floid} is lending ${loan_amount}USD (ref#${loan_transfer_id}) to B#${borrower_floid}
             inaccoradance with policy#${policy_id} 
-            as mortage on collateral#${collateral_id} (${btc_amount}BTC) provided by C#${coborrower_floid}.
+            as mortgage on collateral#${collateral_id} (${btc_amount}BTC) provided by C#${coborrower_floid}.
             Signed by B'${borrower_sign} , C'{coborrower_sign} and L'${lender_sign}    
         */
     }
@@ -192,8 +257,6 @@
         });
         return details;
     }
-
-
 
     const getLoanDetails = btcMortgage.getLoanDetails = function (loan_id) {
         return new Promise((resolve, reject) => {
@@ -229,7 +292,7 @@
         })
     }
 
-    const LOAN_CLOSING_IDENTIFIER = "BTC Mortage: Loan closing";
+    const LOAN_CLOSING_IDENTIFIER = APP_IDENTIFIER + ": Loan closing";
     function stringifyLoanCloseData(loan_id, borrower, closing_sign) {
         return [
             LOAN_CLOSING_IDENTIFIER,
@@ -425,7 +488,6 @@
             return timestamp;
         else return false;
     }
-
 
     btcMortgage.verify = {
         borrower_sign: verify_borrowerSign,
