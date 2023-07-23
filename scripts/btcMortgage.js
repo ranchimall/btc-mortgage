@@ -116,10 +116,9 @@
         return loanEquivalent * inverse_security_percent;
     }
 
-    function calcDueAmount(loan_amount, policy_id, open_time) {
+    function calcDueAmount(loan_amount, policy_id, open_time, close_time = Date.now()) {
         let policy = POLICIES[policy_id],
-            current_time = Date.now(),
-            duration = yearDiff(current_time, open_time);
+            duration = yearDiff(close_time, open_time);
         let interest_amount = loan_amount * policy.interest * duration;
         let due_amount = loan_amount + interest_amount;
         return due_amount;
@@ -257,11 +256,11 @@
         */
     }
 
-    function parseLoanOpenData(str, tx_time) {
+    function parseLoanOpenData(str, txid, tx_time) {
         let splits = str.split('|');
         if (splits[0] !== LOAN_DETAILS_IDENTIFIER)
             throw "Invalid Loan blockchain data";
-        var details = { open_time: tx_time };
+        var details = { loan_id: txid, open_time: tx_time };
         splits.forEach(s => {
             let d = s.split(':');
             switch (d[0]) {
@@ -285,7 +284,7 @@
     const getLoanDetails = btcMortgage.getLoanDetails = function (loan_id) {
         return new Promise((resolve, reject) => {
             floBlockchainAPI.getTx(loan_id).then(tx => {
-                let parsed_loan_details = parseLoanOpenData(tx.floData, tx.time);
+                let parsed_loan_details = parseLoanOpenData(tx.floData, tx.txid, tx.time);
                 validateLoanDetails(parsed_loan_details)
                     .then(_ => resolve(parsed_loan_details))
                     .catch(error => reject(error))
@@ -312,7 +311,45 @@
                 return reject("Invalid coborrower signature");
             if (!verify_lenderSign(loan_details.lender_sign, loan_details.lender, loan_details.coborrower_sign, loan_details.loan_transfer_id))
                 return reject("Invalid lender signature");
-            resolve(true)
+            validateCollateralLock(loan_details.collateral_lock_id, extractPubKeyFromSign(loan_details.coborrower_sign), extractPubKeyFromSign(loan_details.lender_sign), loan_details.collateral_value).then(result => {
+                validateLoanOpenTokenTransfer(loan_details.loan_transfer_id, loan_details.borrower, loan_details.lender, loan_details.loan_amount)
+                    .then(result => resolve(true))
+                    .catch(error => reject(error))
+            }).catch(error => reject(error))
+        })
+    }
+
+    const validateCollateralLock = btcMortgage.validateCollateralLock = function (collateral_lock_id, coborrower_pubKey, lender_pubKey, collateral_value) {
+        return new Promise((resolve, reject) => {
+            btcOperator.getTx(collateral_lock_id).then(collateral_tx => {
+                if (!collateral_tx.confirmations)
+                    return reject("Collateral lock transaction not confirmed yet");
+                let locker_id = findLocker(coborrower_pubKey, lender_pubKey).address;
+                let locked_amt = collateral_tx.outputs.filter(o => o.address == locker_id).reduce((a, o) => a += o.value, 0);
+                if (locked_amt < collateral_value)
+                    return reject("Insufficient Collateral locked");
+                resolve(true);
+            }).catch(error => reject(error))
+        })
+    }
+
+    const validateLoanOpenTokenTransfer = btcMortgage.validateLoanOpenTokenTransfer = function (loan_transfer_id, borrower, lender, loan_amount) {
+        return new Promise((resolve, reject) => {
+            floTokenAPI.getTx(loan_transfer_id).then(token_tx => {
+                if (token_tx.parsedFloData.type != "transfer" || token_tx.parsedFloData.transferType != "token")
+                    return reject("Transaction is not a token transfer");
+                if (token_tx.parsedFloData.tokenIdentification != CURRENCY)
+                    return reject("Transfered token is not " + CURRENCY);
+                if (token_tx.transactionDetails.confirmations == 0)
+                    return reject("Transaction not yet confirmed");
+                if (token_tx.transactionDetails.receiverAddress != floCrypto.toFloID(borrower))
+                    return reject("Receiver is not borrower");
+                if (token_tx.transactionDetails.senderAddress != floCrypto.toFloID(lender))
+                    return reject("Sender is not lender");
+                if (token_tx.parsedFloData.tokenAmount !== loan_amount)
+                    return reject("Token amount doesnot match the loan amount");
+                resolve(true);
+            }).catch(error => reject(error))
         })
     }
 
@@ -326,11 +363,11 @@
         ].join('|');
     }
 
-    function parseLoanCloseData(str, tx_time) {
+    function parseLoanCloseData(str, txid, tx_time) {
         let splits = str.split('|');
-        if (splits[0] !== LOAN_CLOSING_IDENTIFIER)
+        if (splits[1] !== LOAN_CLOSING_IDENTIFIER) //splits[0] will be token transfer
             throw "Invalid Loan closing data";
-        var details = { close_time: tx_time };
+        var details = { close_time: tx_time, close_id: txid };
         splits.forEach(s => {
             let d = s.split(':');
             switch (d[0]) {
@@ -342,19 +379,54 @@
         return details;
     }
 
-    const getLoanClosing = btcMortgage.getLoanClosing = function (loan_id, closing_txid) {
+    const getLoanClosing = btcMortgage.getLoanClosing = function (closing_txid) {
         return new Promise((resolve, reject) => {
             floBlockchainAPI.getTx(closing_txid).then(tx => {
-                let parsed_loan_closing = parseLoanCloseData(tx.floData, tx.time);
-                validateLoanClosing(parsed_loan_closing)
-                    .then(_ => resolve(parsed_loan_closing))
-                    .catch(error => reject(error))
+                let closing_details = parseLoanCloseData(tx.floData, tx.time);
+                getLoanDetails(closing_details.loan_id).then(loan_details => {
+                    validateLoanClosing(loan_details, closing_details)
+                        .then(result => resolve(Object.assign(loan_details, closing_details)))
+                        .catch(error => reject(error))
+                }).catch(error => reject(error))
             }).catch(error => reject(error))
         })
     }
 
-    const validateLoanClosing = btcMortgage.validateLoanClosing = function (loan_id, closing_txid) {
-        //TODO
+    const validateLoanClosing = btcMortgage.validateLoanClosing = function (loan_details, closing_details) {
+        return new Promise((resolve, reject) => {
+            if (closing_details.loan_id !== loan_details.loan_id)
+                return reject("Closing doesnot belong to this loan")
+            if (!floCrypto.validateFloID(closing_details.borrower))
+                return reject("Invalid borrower floID");
+            if (closing_details.borrower != loan_details.borrower)
+                return reject("Borrower ID is different");
+            if (verify_closingSign(closing_details.closing_sign, closing_details.borrower, closing_details.loan_id, loan_details.lender_sign))
+                return reject("Invalid closing signature");
+            validateLoanCloseTokenTransfer(closing_details.close_id, loan_details.borrower, loan_details.lender, loan_details.loan_amount, loan_details.policy_id, loan_details.open_time, closing_details.close_time)
+                .then(result => resolve(true))
+                .catch(error => reject(error))
+        })
+    }
+
+    const validateLoanCloseTokenTransfer = btcMortgage.validateLoanCloseTokenTransfer = function (close_id, borrower, lender, loan_amount, policy_id, open_time, close_time) {
+        return new Promise((resolve, reject) => {
+            floTokenAPI.getTx(close_id).then(token_tx => {
+                if (token_tx.parsedFloData.type != "transfer" || token_tx.parsedFloData.transferType != "token")
+                    return reject("Transaction is not a token transfer");
+                if (token_tx.parsedFloData.tokenIdentification != CURRENCY)
+                    return reject("Transfered token is not " + CURRENCY);
+                if (token_tx.transactionDetails.confirmations == 0)
+                    return reject("Transaction not yet confirmed");
+                if (token_tx.transactionDetails.receiverAddress != floCrypto.toFloID(lender))
+                    return reject("Receiver is not lender");
+                if (token_tx.transactionDetails.senderAddress != floCrypto.toFloID(borrower))
+                    return reject("Sender is not borrower");
+                let repay_amount = calcDueAmount(loan_amount, policy_id, open_time, close_time);
+                if (token_tx.parsedFloData.tokenAmount < repay_amount)
+                    return reject("Token amount is less than loan repayment amount");
+                resolve(true);
+            }).catch(error => reject(error))
+        })
     }
 
     /*Signature and verification */
@@ -877,7 +949,7 @@
                 //repay and close the loan
                 let closing_sign = sign_closing(privKey, loan_id, loan_details.lender_sign);
                 var closing_data = stringifyLoanCloseData(loan_id, loan_details.borrower, closing_sign);
-                floTokenAPI.sendToken(privKey, due_amount, loan_details.lender, closing_data, CURRENCY).then(closing_txid => {
+                floTokenAPI.sendToken(privKey, due_amount, loan_details.lender, "|" + closing_data, CURRENCY).then(closing_txid => {
                     //send message to coborrower as reminder to unlock collateral
                     floCloudAPI.sendApplicationData({ loan_id, closing_txid }, TYPE_LOAN_CLOSED_ACK, { receiverID: loan_details.coborrower })
                         .then(result => {
@@ -1312,7 +1384,10 @@
                     //check output
                     let return_amount = total_collateral_value - due_amount;
                     if (return_amount > 0) {
-                        //TODO: check if the return amount and receiver is correct
+                        let return_outpts_amount = tx.outs.filter(o => spendScriptToAddress(o.script) == coborrower_btcID).reduce((a, o) => a += o.value, 0)
+                        return_outpts_amount = btcOperator.util.Sat_to_BTC(return_outpts_amount);
+                        if (return_outpts_amount < return_amount)
+                            return reject("Return value after liquidation is lower")
                     }
                     //sign the tx hex
                     tx.sign(privKey, 1 /*sighashtype*/);
@@ -1320,6 +1395,21 @@
                 }).catch(error => reject(error))
             }).catch(error => reject(error))
         })
+    }
+
+    function spendScriptToAddress(script) {
+        var address;
+        switch (script.chunks[0]) {
+            case 0: //bech32, multisig-bech32
+                address = btcOperator.util.encodeBech32(Crypto.util.bytesToHex(script.chunks[1]), coinjs.bech32.version, coinjs.bech32.hrp);
+                break;
+            case 169: //segwit, multisig-segwit
+                address = btcOperator.util.encodeLegacy(Crypto.util.bytesToHex(script.chunks[1]), coinjs.multisig);
+                break;
+            case 118: //legacy
+                address = btcOperator.util.encodeLegacy(Crypto.util.bytesToHex(script.chunks[2]), coinjs.pub);
+        }
+        return address;
     }
 
     function checkIfLoanClosed(loan_id, borrower, lender) {
