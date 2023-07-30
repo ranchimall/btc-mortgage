@@ -1,4 +1,4 @@
-(function (EXPORTS) { //floDapps v2.4.0
+(function (EXPORTS) { //floDapps v2.4.1
     /* General functions for FLO Dapps*/
     'use strict';
     const floDapps = EXPORTS;
@@ -172,12 +172,7 @@
                 //general
                 lastTx: {},
                 //supernode (cloud list)
-                supernodes: {
-                    indexes: {
-                        uri: null,
-                        pubKey: null
-                    }
-                }
+                supernodes: {}
             }
             var obs_a = {
                 //login credentials
@@ -257,7 +252,8 @@
         return new Promise((resolve, reject) => {
             if (!startUpOptions.cloud)
                 return resolve("No cloud for this app");
-            compactIDB.readData("lastTx", floCloudAPI.SNStorageID, DEFAULT.root).then(lastTx => {
+            const CLOUD_KEY = "floCloudAPI#" + floCloudAPI.SNStorageID;
+            compactIDB.readData("lastTx", CLOUD_KEY, DEFAULT.root).then(lastTx => {
                 var query_options = { sentOnly: true, pattern: floCloudAPI.SNStorageName };
                 if (typeof lastTx == 'number')  //lastTx is tx count (*backward support)
                     query_options.ignoreOld = lastTx;
@@ -265,25 +261,27 @@
                     query_options.after = lastTx;
                 //fetch data from flosight
                 floBlockchainAPI.readData(floCloudAPI.SNStorageID, query_options).then(result => {
-                    for (var i = result.data.length - 1; i >= 0; i--) {
-                        var content = JSON.parse(result.data[i])[floCloudAPI.SNStorageName];
-                        for (let sn in content.removeNodes)
-                            compactIDB.removeData("supernodes", sn, DEFAULT.root);
-                        for (let sn in content.newNodes)
-                            compactIDB.writeData("supernodes", content.newNodes[sn], sn, DEFAULT.root);
-                        for (let sn in content.updateNodes)
-                            compactIDB.readData("supernodes", sn, DEFAULT.root).then(r => {
-                                r = r || {}
-                                r.uri = content.updateNodes[sn];
-                                compactIDB.writeData("supernodes", r, sn, DEFAULT.root);
-                            });
-                    }
-                    compactIDB.writeData("lastTx", result.lastItem, floCloudAPI.SNStorageID, DEFAULT.root);
-                    compactIDB.readAllData("supernodes", DEFAULT.root).then(nodes => {
-                        floCloudAPI.init(nodes)
-                            .then(result => resolve("Loaded Supernode list\n" + result))
-                            .catch(error => reject(error))
-                    })
+                    compactIDB.readData("supernodes", CLOUD_KEY, DEFAULT.root).then(nodes => {
+                        nodes = nodes || {};
+                        for (var i = result.data.length - 1; i >= 0; i--) {
+                            var content = JSON.parse(result.data[i])[floCloudAPI.SNStorageName];
+                            for (let sn in content.removeNodes)
+                                delete nodes[sn];
+                            for (let sn in content.newNodes)
+                                nodes[sn] = content.newNodes[sn];
+                            for (let sn in content.updateNodes)
+                                if (sn in nodes) //check if node is listed
+                                    nodes[sn].uri = content.updateNodes[sn];
+                        }
+                        Promise.all([
+                            compactIDB.writeData("lastTx", result.lastItem, CLOUD_KEY, DEFAULT.root),
+                            compactIDB.writeData("supernodes", nodes, CLOUD_KEY, DEFAULT.root)
+                        ]).then(_ => {
+                            floCloudAPI.init(nodes)
+                                .then(result => resolve("Loaded Supernode list\n" + result))
+                                .catch(error => reject(error))
+                        }).catch(error => reject(error))
+                    }).catch(error => reject(error))
                 })
             }).catch(error => reject(error))
         })

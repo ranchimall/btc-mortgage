@@ -1,4 +1,4 @@
-(function (EXPORTS) { //btcOperator v1.1.3b
+(function (EXPORTS) { //btcOperator v1.1.4
     /* BTC Crypto and API Operator */
     const btcOperator = EXPORTS;
 
@@ -44,6 +44,7 @@
             }).catch(error => reject(error))
         })
     }
+    util.get_fee_rate = get_fee_rate;
 
     const broadcastTx = btcOperator.broadcastTx = rawTxHex => new Promise((resolve, reject) => {
         let url = 'https://coinb.in/api/?uid=1&key=12345678901234567890123456789012&setmodule=bitcoin&request=sendrawtransaction';
@@ -282,6 +283,14 @@
         BECH32_MULTISIG_OUTPUT_SIZE = 34,
         SEGWIT_OUTPUT_SIZE = 23;
 
+    btcOperator.CONSTANTS = {
+        DUST_AMT, MIN_FEE_UPDATE, SATOSHI_IN_BTC,
+        BASE_TX_SIZE, BASE_INPUT_SIZE, LEGACY_INPUT_SIZE, BECH32_INPUT_SIZE,
+        BECH32_MULTISIG_INPUT_SIZE, SEGWIT_INPUT_SIZE, MULTISIG_INPUT_SIZE_ES,
+        BASE_OUTPUT_SIZE, LEGACY_OUTPUT_SIZE, BECH32_OUTPUT_SIZE,
+        BECH32_MULTISIG_OUTPUT_SIZE, SEGWIT_OUTPUT_SIZE
+    };
+
     function _redeemScript(addr, key) {
         let decode = coinjs.addressDecode(addr);
         switch (decode.type) {
@@ -317,6 +326,7 @@
                 return null;
         }
     }
+    util.sizePerInput = _sizePerInput;
 
     function _sizePerOutput(addr) {
         switch (coinjs.addressDecode(addr).type) {
@@ -332,6 +342,7 @@
                 return null;
         }
     }
+    util.sizePerOutput = _sizePerOutput;
 
     function validateTxParameters(parameters) {
         let invalids = [];
@@ -442,6 +453,20 @@
         })
     }
 
+    const getUTXOs = btcOperator.getUTXOs = addr => new Promise((resolve, reject) => {
+        fetch_api(`unspent?active=${addr}`).then(result => {
+            let utxos = result.unspent_outputs;
+            resolve(utxos.map(u => ({
+                txid: u.tx_hash_big_endian,
+                vout: u.tx_output_n,
+                n: u.tx_output_n,
+                value: u.value,
+                value_hex: u.value_hex,
+                script: u.script
+            })))
+        }).catch(error => reject(error))
+    })
+
     function addUTXOs(tx, senders, redeemScripts, required_amount, fee_rate, rec_args = {}) {
         return new Promise((resolve, reject) => {
             required_amount = parseFloat(required_amount.toFixed(8));
@@ -462,8 +487,7 @@
                 rs = redeemScripts[rec_args.n];
             let addr_type = coinjs.addressDecode(addr).type;
             let size_per_input = _sizePerInput(addr, rs);
-            fetch_api(`unspent?active=${addr}`).then(result => {
-                let utxos = result.unspent_outputs;
+            getUTXOs(addr).then(utxos => {
                 //console.debug("add-utxo", addr, rs, required_amount, utxos);
                 for (let i = 0; i < utxos.length && required_amount > 0; i++) {
                     if (!utxos[i].confirmations) //ignore unconfirmed utxo
@@ -480,7 +504,7 @@
                         script = Crypto.util.bytesToHex(s.buffer);
                     } else //redeemScript for multisig (segwit)
                         script = rs;
-                    tx.addinput(utxos[i].tx_hash_big_endian, utxos[i].tx_output_n, script, 0xfffffffd /*sequence*/); //0xfffffffd for Replace-by-fee
+                    tx.addinput(utxos[i].txid, utxos[i].vout, script, 0xfffffffd /*sequence*/); //0xfffffffd for Replace-by-fee
                     //update track values
                     rec_args.input_size += size_per_input;
                     rec_args.input_amount += util.Sat_to_BTC(utxos[i].value);
