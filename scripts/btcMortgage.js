@@ -13,7 +13,8 @@
         WAIT_TIME = 24 * 60 * 60 * 1000;//24 hrs
     const PERIOD_REGEX = /^\d{1,5}(Y|M|D)$/,
         TXID_REGEX = /^[0-9a-f]{64}$/i,
-        VALUE_REGEX = /^\d+(.\d{1,8})?$/;
+        PERCENT_REGEX = /^(100|\d{1,2}(\.\d{1,8})?)$/,
+        VALUE_REGEX = /^\d+(\.\d{1,8})?$/;
 
     const
         TYPE_LOAN_COLLATERAL_REQUEST = "type_loan_collateral_request",
@@ -148,7 +149,7 @@
 
     Object.defineProperties(util, {
         USER_DB: {
-            get: () => APP_NAME + '|' + floDapps.user.id
+            get: () => APP_NAME + '#' + floCrypto.toFloID(floDapps.user.id)
         }
     })
 
@@ -160,7 +161,7 @@
             fetch('https://api.coinlore.net/api/ticker/?id=90').then(response => {
                 if (response.ok) {
                     response.json()
-                        .then(result => resolve(result[0].price_usd))
+                        .then(result => resolve(parseFloat(result[0].price_usd)))
                         .catch(error => reject(error));
                 } else
                     reject(response.status);
@@ -225,8 +226,8 @@
                             p.push(compactIDB.addData("policies", policy_details, policy_id));
                         }
                     }
+                    p.push(compactIDB.writeData("lastTx", result.lastItem, LASTTX_IDB_KEY))
                     Promise.all(p).then(result => {
-                        compactIDB.writeData("lastTx", result.lastItem, LASTTX_IDB_KEY);
                         compactIDB.readAllData("policies").then(result => {
                             for (let p in result)
                                 POLICIES[p] = result[p];
@@ -243,12 +244,13 @@
         return new Promise((resolve, reject) => {
             const LASTTX_IDB_KEY = "U#" + floDapps.user.id;
             compactIDB.readData("lastTx", LASTTX_IDB_KEY).then(lastTx => {
-                var query_options = { sentOnly: true, tx: true, filter: d => d.startsWith(APP_IDENTIFIER) };
+                var query_options = { sentOnly: true, tx: true, filter: d => typeof d == 'string' && d.startsWith(APP_IDENTIFIER) };
                 if (typeof lastTx == 'number')  //lastTx is tx count (*backward support)
                     query_options.ignoreOld = lastTx;
                 else if (typeof lastTx == 'string') //lastTx is txid of last tx
                     query_options.after = lastTx;
-                floBlockchainAPI.readData(floDapps.user.id, query_options).then(result => {
+                let user_floID = floCrypto.toFloID(floDapps.user.id);
+                floBlockchainAPI.readData(user_floID, query_options).then(result => {
                     let p = [];
                     for (var i = result.items.length - 1; i >= 0; i--) {
                         let t = result.items[i];
@@ -303,14 +305,34 @@
 
     //Policy details 
     const LOAN_POLICY_IDENTIFIER = APP_IDENTIFIER + ": Loan policy";
-    function stringifyPolicyData(duration, interest, pre_liquidation_threshold, loan_collateral_ratio) {
+    function stringifyPolicyData(duration, interest, pre_liquidation_threshold, security_percent) {
         return [
             LOAN_POLICY_IDENTIFIER,
             "Duration:" + decodePeriod(duration),
-            "Interest per annum:" + interest,
-            "Pre-Liquidation threshold:" + pre_liquidation_threshold,
-            "Loan to Collateral ratio:" + loan_collateral_ratio
+            "Interest per annum:" + interest + "%",
+            "Pre-Liquidation threshold:" + pre_liquidation_threshold + "%",
+            "Loan to Collateral ratio:" + security_percent + "%"
         ].join('|');
+    }
+
+    btcMortgage.writePolicy = function (banker_privKey, duration, interest, pre_liquidation_threshold, security_percent) {
+        return new Promise((resolve, reject) => {
+            if (floCrypto.verifyPrivKey(banker_privKey, BANKER_ID))
+                return reject("Invalid private key for banker");
+            if (!PERIOD_REGEX.test(duration))
+                return reject("Invalid duration, not in format");
+            if (!PERCENT_REGEX.test(interest))
+                return reject("Invalid interest");
+            if (pre_liquidation_threshold !== null && !PERCENT_REGEX.test(pre_liquidation_threshold))
+                return reject("Invalid pre_liquidation_threshold");
+            if (!PERCENT_REGEX.test(security_percent))
+                return reject("Invalid security_percent");
+            let policy_text = stringifyPolicyData(duration, interest, pre_liquidation_threshold, security_percent);
+            console.debug(policy_text);
+            floBlockchainAPI.writeData(BANKER_ID, policy_text, banker_privKey, BANKER_ID)
+                .then(result => resolve(result))
+                .catch(error => reject(error))
+        })
     }
 
     function parsePolicyData(str, tx_time) {
@@ -322,9 +344,9 @@
             let d = s.split(':');
             switch (d[0]) {
                 case "Duration": details.duration = encodePeriod(d[1]); break;
-                case "Interest per annum": details.interest = parseFloat(d[1]); break;
-                case "Pre-Liquidation threshold": details.pre_liquidation_threshold = parseFloat(d[1]); break;
-                case "Loan to Collateral ratio": details.loan_collateral_ratio = parseFloat(d[1]); break;
+                case "Interest per annum": details.interest = parseFloat(d[1]) / 100; break; //percentage conversion
+                case "Pre-Liquidation threshold": details.pre_liquidation_threshold = parseFloat(d[1]) / 100; break; //percentage conversion
+                case "Loan to Collateral ratio": details.security_percent = parseFloat(d[1]) / 100; break; //percentage conversion
             }
         });
         return details;
