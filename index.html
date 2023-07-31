@@ -26,7 +26,7 @@
 
             })();
     </script>
-    <script src="scripts/"></script>
+    <script src="scripts/lib.js"></script>
     <script src="scripts/floCrypto.js"></script>
     <script src="scripts/btcOperator.js"></script>
     <script src="scripts/floBlockchainAPI.js"></script>
@@ -34,22 +34,23 @@
     <script src="scripts/compactIDB.js"></script>
     <script src="scripts/floCloudAPI.js"></script>
     <script src="scripts/floDapps.js"></script>
+    <script src="scripts/btcMortgage.js"></script>
     <script id="onLoadStartUp">
         function onLoadStartUp() {
             if (window.quick) return;
-            //floDapps.addStartUpFunction('Sample', Promised Function)
-            floDapps.setAppObjectStores({ lastTx: {}, policies: {}, outbox: {}, inbox: {} })
-            //floDapps.setCustomPrivKeyInput( () => { FUNCTION BODY *must resolve private key* } )
             floDapps.launchStartUp().then(result => {
                 console.log(result)
                 alert(`Welcome FLO_ID: ${myFloID}`)
                 //App functions....
+                btcMortgage.init()
+                    .then(result => console.info(result))
+                    .catch(error => console.error(error))
             }).catch(error => console.error(error))
         }
     </script>
 </head>
 
-<body onload="onLoadStartUp()">
+<body onload="onLoadStartUp()" style="background-color:black;">
     TEST_MODE
     (use console)
 </body>

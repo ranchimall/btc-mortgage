@@ -31,7 +31,8 @@
         TYPE_PRELIQUATE_COLLATERAL_REQUEST = "type_preliquate_collateral_request";
     TYPE_PRELIQUATE_COLLATERAL_ACK = "type_preliquate_collateral_ack";
 
-    const POLICIES = {}
+    const POLICIES = {}, LOANS = {};
+    const owned_collateral_locks = {};
 
     const toFixedDecimal = value => parseFloat((value).toFixed(8));
 
@@ -138,12 +139,18 @@
         return sign.split('.')[0];
     }
 
-    btcMortgage.util = {
+    const util = btcMortgage.util = {
         toFixedDecimal,
         encodePeriod, decodePeriod,
         calcAllowedLoan, calcRequiredCollateral,
         findLocker, extractPubKeyFromSign
     }
+
+    Object.defineProperties(util, {
+        USER_DB: {
+            get: () => APP_NAME + '|' + floDapps.user.id
+        }
+    })
 
     //get BTC rates
     const getRate = btcMortgage.getRate = {};
@@ -161,10 +168,45 @@
         });
     }
 
+    btcMortgage.init = function () {
+        initDB().then(result => {
+            console.log(result);
+            loadOwnedCollateralLocksFromIDB().then(_ => {
+                readPoliciesFromBlockchain().then(policies => {
+                    console.log("Policies", policies);
+                    readAllLoans().then(loans => {
+                        console.log("Loans", loans);
+                        resolve("App initiation successful")
+                    }).catch(error => reject(error))
+                }).catch(error => reject(error))
+            }).catch(error => reject(error))
+        }).catch(error => reject(error))
+    }
+
+    function initDB() {
+        return new Promise((resolve, reject) => {
+            let obs = { lastTx: {}, policies: {}, loans: {}, outbox: {}, inbox: {}, owned_collateral_locks: {} }
+            compactIDB.initDB(util.USER_DB, obs).then(result => {
+                compactIDB.setDefaultDB(util.USER_DB);
+                resolve(APP_IDENTIFIER + " user DB initiated");
+            }).catch(error => reject(error))
+        })
+    }
+
+    function loadOwnedCollateralLocksFromIDB() {
+        return new Promise((resolve, reject) => {
+            compactIDB.readAllData("owned_collateral_locks").then(result => {
+                for (let c in result)
+                    owned_collateral_locks[c] = result[c];
+                resolve(owned_collateral_locks);  //MAYBE: resolve a copy of it?
+            }).catch(error => reject(error))
+        })
+    }
+
     //function to read all policy from blockchain
     function readPoliciesFromBlockchain() {
         return new Promise((resolve, reject) => {
-            const LASTTX_IDB_KEY = APP_NAME + ":" + BANKER_ID
+            const LASTTX_IDB_KEY = "B#" + BANKER_ID
             compactIDB.readData("lastTx", LASTTX_IDB_KEY).then(lastTx => {
                 var query_options = { sentOnly: true, tx: true, filter: d => d.startsWith(APP_IDENTIFIER) };
                 if (typeof lastTx == 'number')  //lastTx is tx count (*backward support)
@@ -190,6 +232,69 @@
                         })
                     }).catch(error => reject(error))
                 }).catch(error => reject(error))
+            }).catch(error => reject(error))
+        })
+    }
+
+    //function to read all loan details of the user
+    function readAllLoans() {
+        return new Promise((resolve, reject) => {
+            const LASTTX_IDB_KEY = "U#" + floDapps.user.id;
+            compactIDB.readData("lastTx", LASTTX_IDB_KEY).then(lastTx => {
+                var query_options = { sentOnly: true, tx: true, filter: d => d.startsWith(APP_IDENTIFIER) };
+                if (typeof lastTx == 'number')  //lastTx is tx count (*backward support)
+                    query_options.ignoreOld = lastTx;
+                else if (typeof lastTx == 'string') //lastTx is txid of last tx
+                    query_options.after = lastTx;
+                floBlockchainAPI.readData(floDapps.user.id, query_options).then(result => {
+                    let p = [];
+                    for (var i = result.items.length - 1; i >= 0; i--) {
+                        let t = result.items[i];
+                        if (t.data.startsWith(LOAN_DETAILS_IDENTIFIER))
+                            p.push(validateAndStoreLoanOpenDetails(t));
+                        else if (t.data.startsWith(LOAN_CLOSING_IDENTIFIER))
+                            p.push(validateAndStoreLoanCloseDetails(t))
+                    }
+                    p.push(compactIDB.writeData("lastTx", result.lastItem, LASTTX_IDB_KEY));
+                    Promise.all(p).then(_ => {
+                        compactIDB.readAllData("loans").then(result => {
+                            for (let l in result)
+                                LOANS[l] = result[l];
+                            resolve(LOANS);  //MAYBE: resolve a copy of it?
+                        }).catch(error => reject(error))
+                    }).catch(error => reject(error))
+                }).catch(error => reject(error))
+            }).catch(error => reject(error))
+        })
+    }
+
+    function validateAndStoreLoanOpenDetails(t) {
+        return new Promise((resolve, reject) => {
+            let loan_id = t.txid,
+                loan_details = parseLoanOpenData(t.data, t.txid, t.time);
+            validateLoanDetails(loan_details).then(result => {
+                compactIDB.addData("loans", loan_details, loan_id)
+                    .then(result => resolve(result))
+                    .catch(error => reject(error))
+            }).catch(_ => resolve(null)) //validation fails, no need to reject DB write
+        })
+    }
+
+    function validateAndStoreLoanCloseDetails(t) {
+        return new Promise((resolve, reject) => {
+            let closing_details = parseLoanCloseData(t.data, t.txid, t.time);
+            compactIDB.readData("loans", closing_details.loan_id).then(loan_details => {
+                if (!loan_details) {
+                    console.warn(`Loan#${closing_details.loan_id} not found in local DB`)
+                    return resolve(null);
+                }
+                validateLoanClosing(loan_details, closing_details).then(result => {
+                    let loan_id = loan_details.loan_id;
+                    Object.assign(loan_details, closing_details);
+                    compactIDB.writeData("loans", loan_details, loan_id)
+                        .then(result => resolve(result))
+                        .catch(error => reject(error))
+                }).catch(_ => resolve(null)) //validation fails, no need to reject DB write
             }).catch(error => reject(error))
         })
     }
@@ -382,7 +487,7 @@
     const getLoanClosing = btcMortgage.getLoanClosing = function (closing_txid) {
         return new Promise((resolve, reject) => {
             floBlockchainAPI.getTx(closing_txid).then(tx => {
-                let closing_details = parseLoanCloseData(tx.floData, tx.time);
+                let closing_details = parseLoanCloseData(tx.floData, tx.txid, tx.time);
                 getLoanDetails(closing_details.loan_id).then(loan_details => {
                     validateLoanClosing(loan_details, closing_details)
                         .then(result => resolve(Object.assign(loan_details, closing_details)))
@@ -900,7 +1005,6 @@
                         let locked_amt = collateral_tx.outputs.filter(o => o.address == locker_id).reduce((a, o) => a += o.value, 0);
                         if (locked_amt < collateral.quantity)
                             return reject(RequestValidationError(TYPE_COLLATERAL_LOCK_ACK, "Insufficient Collateral locked"));
-                        //TODO: make sure same collateral is not reused?
                         result.coborrower_sign = coborrower_sign;
                         result.collateral_lock_id = collateral_lock_id;
                         result.collateral_time = collateral_tx.time;
@@ -916,7 +1020,13 @@
         return new Promise((resolve, reject) => {
             const lender = floDapps.user.id;
             validate_collateralLock_ack(collateral_lock_ack_id, borrower, coborrower, lender).then(result => {
-                let { loan_amount, policy_id, collateral, borrower_sign, coborrower_sign } = result;
+                let { loan_amount, policy_id, collateral, collateral_lock_id, borrower_sign, coborrower_sign } = result;
+                //check if collateral is already used on a different loan
+                for (let l in LOANS)
+                    if (LOANS[l].collateral_lock_id === collateral_lock_id)
+                        return reject(`Collateral already used in a different loan (${l})`);
+                if (collateral_lock_id in owned_collateral_locks)
+                    return reject("Collateral is being used for a different loan in-process");
                 //transfer tokens for loan amount
                 floTokenAPI.sendToken(privKey, loan_amount, borrower, "as loan", CURRENCY).then(token_txid => {
                     //construct the blockchain data
@@ -929,9 +1039,12 @@
                     );
                     let receivers = [borrower, coborrower].map(addr => floCrypto.toFloID(addr));
                     //write loan details in blockchain
-                    floBlockchainAPI.writeDataMultiple([privKey], blockchainData, receivers)
-                        .then(result => resolve(result))
-                        .catch(error => reject(error))
+                    floBlockchainAPI.writeDataMultiple([privKey], blockchainData, receivers).then(loan_txid => {
+                        //add the collateral lock to owned list
+                        owned_collateral_locks[collateral_lock_id] = loan_txid;
+                        compactIDB.addData("owned_collateral_locks", loan_txid, collateral_lock_id);
+                        resolve(loan_txid);
+                    }).catch(error => reject(error))
                 }).catch(error => reject(error))
             }).catch(error => reject(error))
 
