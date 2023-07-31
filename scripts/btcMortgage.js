@@ -5,8 +5,8 @@
 
     const APP_NAME = "BTCMortgage";
     const APP_IDENTIFIER = "BTC Mortgage";
-    const BANKER_ID = "";
-    const BANKER_PUBKEY = "";
+    const BANKER_ID = "FKAEdnPfjXLHSYwrXQu377ugN4tXU7VGdf";
+    const BANKER_PUBKEY = '032FCA79F94AF6D6BC4A90B93A55B81501618E1B670665D161334C0041A41C54C3';
 
     const CURRENCY = "USD";
     const ALLOWED_DEVIATION = 0.98, //ie, upto 2% of decrease in rate can be accepted in processing stage
@@ -169,18 +169,20 @@
     }
 
     btcMortgage.init = function () {
-        initDB().then(result => {
-            console.log(result);
-            loadOwnedCollateralLocksFromIDB().then(_ => {
-                readPoliciesFromBlockchain().then(policies => {
-                    console.log("Policies", policies);
-                    readAllLoans().then(loans => {
-                        console.log("Loans", loans);
-                        resolve("App initiation successful")
+        return new Promise((resolve, reject) => {
+            initDB().then(result => {
+                console.log(result);
+                loadOwnedCollateralLocksFromIDB().then(_ => {
+                    readPoliciesFromBlockchain().then(policies => {
+                        console.log("Policies", policies);
+                        readAllLoans().then(loans => {
+                            console.log("Loans", loans);
+                            resolve("App initiation successful")
+                        }).catch(error => reject(error))
                     }).catch(error => reject(error))
                 }).catch(error => reject(error))
             }).catch(error => reject(error))
-        }).catch(error => reject(error))
+        })
     }
 
     function initDB() {
@@ -208,7 +210,7 @@
         return new Promise((resolve, reject) => {
             const LASTTX_IDB_KEY = "B#" + BANKER_ID
             compactIDB.readData("lastTx", LASTTX_IDB_KEY).then(lastTx => {
-                var query_options = { sentOnly: true, tx: true, filter: d => d.startsWith(APP_IDENTIFIER) };
+                var query_options = { sentOnly: true, tx: true, filter: d => typeof d == 'string' && d.startsWith(APP_IDENTIFIER) };
                 if (typeof lastTx == 'number')  //lastTx is tx count (*backward support)
                     query_options.ignoreOld = lastTx;
                 else if (typeof lastTx == 'string') //lastTx is txid of last tx
