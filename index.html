@@ -7,7 +7,8 @@
         /* Constants for FLO blockchain operations !!Make sure to add this at beginning!! */
         const floGlobals = {
             blockchain: "FLO",
-            adminID: "FKAEdnPfjXLHSYwrXQu377ugN4tXU7VGdf",
+            adminID: "FDnimh9nU7qg9AsiSotQf9aPUvNYisckSW",
+            SNStorageID: "FSF5igBd9xC7ZBB511DZG8PVB2eT93YE3M",
             application: "TEST_MODE",
         }
     </script>
@@ -40,11 +41,15 @@
             if (window.quick) return;
             floDapps.launchStartUp().then(result => {
                 console.log(result)
-                alert(`Welcome FLO_ID: ${myFloID}`)
+                //alert(`Welcome FLO_ID: ${myFloID}`)
                 //App functions....
-                btcMortgage.init()
-                    .then(result => console.info(result))
-                    .catch(error => console.error(error))
+                btcMortgage.init().then(result => {
+                    console.info(result)
+                    Promise.allSettled([
+                        btcMortgage.viewMyInbox(d => console.log("INBOX", d)),
+                        btcMortgage.listLoanRequests(d => console.log("LOAN REQ", d))
+                    ]).then(result => console.log(result))
+                }).catch(error => console.error(error))
             }).catch(error => console.error(error))
         }
     </script>
