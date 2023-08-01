@@ -75,9 +75,9 @@
         let v = str[str.length - 1];
 
         switch (v) {
-            case 'Y': return n + (n == 1 ? "year" : "years");
-            case 'M': return n + (n == 1 ? "month" : "months");
-            case "D": return n + (n == 1 ? "day" : "days");
+            case 'Y': return n + " " + (n == 1 ? "year" : "years");
+            case 'M': return n + " " + (n == 1 ? "month" : "months");
+            case "D": return n + " " + (n == 1 ? "day" : "days");
         }
 
     }
@@ -109,13 +109,12 @@
         return date;
     }
 
-    function calcAllowedLoan(collateralQuantity, security_percent) {
-        return collateralQuantity * security_percent;
+    function calcAllowedLoan(collateralQuantity, loan_collateral_ratio) {
+        return collateralQuantity * loan_collateral_ratio;
     }
 
-    function calcRequiredCollateral(loanEquivalent, security_percent) {
-        let inverse_security_percent = 1 / security_percent;
-        return loanEquivalent * inverse_security_percent;
+    function calcRequiredCollateral(loanEquivalent, loan_collateral_ratio) {
+        return loanEquivalent / loan_collateral_ratio;
     }
 
     function calcDueAmount(loan_amount, policy_id, open_time, close_time = Date.now()) {
@@ -126,10 +125,9 @@
         return due_amount;
     }
 
-    function calcRateDropPercent(start_rate, current_rate) {
-        let drop_value = start_rate - current_rate;
-        let drop_percent = drop_value / start_rate;
-        return drop_percent;
+    function calcRateRatio(current_rate, start_rate) {
+        let rate_ratio = 1 + (current_rate - start_rate) / start_rate;
+        return rate_ratio;
     }
 
     function findLocker(coborrower_pubKey, lender_pubKey) {
@@ -304,20 +302,21 @@
     }
 
     //Policy details 
-    const LOAN_POLICY_IDENTIFIER = APP_IDENTIFIER + ": Loan policy";
-    function stringifyPolicyData(duration, interest, pre_liquidation_threshold, security_percent) {
+    const LOAN_POLICY_IDENTIFIER = APP_IDENTIFIER + ":Loan policy";
+    function stringifyPolicyData(duration, interest, pre_liquidation_threshold, loan_collateral_ratio) {
+        pre_liquidation_threshold = (pre_liquidation_threshold === null) ? 'NA' : pre_liquidation_threshold + "%";
         return [
             LOAN_POLICY_IDENTIFIER,
             "Duration:" + decodePeriod(duration),
             "Interest per annum:" + interest + "%",
-            "Pre-Liquidation threshold:" + pre_liquidation_threshold + "%",
-            "Loan to Collateral ratio:" + security_percent + "%"
+            "Pre-Liquidation threshold:" + pre_liquidation_threshold,
+            "Loan to Collateral ratio:" + loan_collateral_ratio + "%"
         ].join('|');
     }
 
-    btcMortgage.writePolicy = function (banker_privKey, duration, interest, pre_liquidation_threshold, security_percent) {
+    btcMortgage.writePolicy = function (banker_privKey, duration, interest, pre_liquidation_threshold, loan_collateral_ratio) {
         return new Promise((resolve, reject) => {
-            if (floCrypto.verifyPrivKey(banker_privKey, BANKER_ID))
+            if (!floCrypto.verifyPrivKey(banker_privKey, BANKER_ID))
                 return reject("Invalid private key for banker");
             if (!PERIOD_REGEX.test(duration))
                 return reject("Invalid duration, not in format");
@@ -325,10 +324,11 @@
                 return reject("Invalid interest");
             if (pre_liquidation_threshold !== null && !PERCENT_REGEX.test(pre_liquidation_threshold))
                 return reject("Invalid pre_liquidation_threshold");
-            if (!PERCENT_REGEX.test(security_percent))
-                return reject("Invalid security_percent");
-            let policy_text = stringifyPolicyData(duration, interest, pre_liquidation_threshold, security_percent);
+            if (!PERCENT_REGEX.test(loan_collateral_ratio))
+                return reject("Invalid loan_collateral_ratio");
+            let policy_text = stringifyPolicyData(duration, interest, pre_liquidation_threshold, loan_collateral_ratio);
             console.debug(policy_text);
+            debugger;
             floBlockchainAPI.writeData(BANKER_ID, policy_text, banker_privKey, BANKER_ID)
                 .then(result => resolve(result))
                 .catch(error => reject(error))
@@ -346,14 +346,14 @@
                 case "Duration": details.duration = encodePeriod(d[1]); break;
                 case "Interest per annum": details.interest = parseFloat(d[1]) / 100; break; //percentage conversion
                 case "Pre-Liquidation threshold": details.pre_liquidation_threshold = parseFloat(d[1]) / 100; break; //percentage conversion
-                case "Loan to Collateral ratio": details.security_percent = parseFloat(d[1]) / 100; break; //percentage conversion
+                case "Loan to Collateral ratio": details.loan_collateral_ratio = parseFloat(d[1]) / 100; break; //percentage conversion
             }
         });
         return details;
     }
 
     //Loan details on FLO blockchain
-    const LOAN_DETAILS_IDENTIFIER = APP_IDENTIFIER + ": Loan details";
+    const LOAN_DETAILS_IDENTIFIER = APP_IDENTIFIER + ":Loan details";
 
     function stringifyLoanOpenData(
         borrower, loan_amount, policy_id, btc_start_rate,
@@ -482,7 +482,7 @@
         })
     }
 
-    const LOAN_CLOSING_IDENTIFIER = APP_IDENTIFIER + ": Loan closing";
+    const LOAN_CLOSING_IDENTIFIER = APP_IDENTIFIER + ":Loan closing";
     function stringifyLoanCloseData(loan_id, borrower, closing_sign) {
         return [
             LOAN_CLOSING_IDENTIFIER,
@@ -748,7 +748,7 @@
     }
 
     //view responses 
-    btcMortgage.viewMyInbox = function () {
+    btcMortgage.viewMyInbox = function (callback = undefined) {
         return new Promise((resolve, reject) => {
             let options = { receiverID: floDapps.user.id }
             if (callback instanceof Function)
@@ -818,7 +818,7 @@
                 //calculate required collateral
                 getRate["BTC"].then(rate => {
                     let policy = POLICIES[policy_id];
-                    let collateral_value = calcRequiredCollateral(loan_amount * rate, policy.security_percent)
+                    let collateral_value = calcRequiredCollateral(loan_amount * rate, policy.loan_collateral_ratio)
                     //check if collateral is available
                     let coborrower_floID = floCrypto.toFloID(coborrower);
                     let coborrower_btcID = btcOperator.convert.legacy2bech(coborrower_floID);
@@ -866,7 +866,7 @@
                         if (rate * ALLOWED_DEVIATION > collateral.rate)
                             return reject(RequestValidationError(TYPE_LOAN_REQUEST, "BTC rate has reduced beyond allowed threshold"))
                         let policy = POLICIES[policy_id];
-                        let required_collateral = calcRequiredCollateral(loan_amount * collateral.rate, policy.security_percent)
+                        let required_collateral = calcRequiredCollateral(loan_amount * collateral.rate, policy.loan_collateral_ratio)
                         if (required_collateral > collateral.quantity)
                             return reject(RequestValidationError(TYPE_LOAN_REQUEST, "Insufficient collateral value"));
                         //check if collateral is available
@@ -1364,8 +1364,8 @@
                 getRate["USD"].then(cur_btc_rate => {
                     if (cur_btc_rate >= loan_details.btc_start_rate)
                         return reject("BTC rate hasn't reduced from the start rate");
-                    let drop_percent = calcRateDropPercent(cur_btc_rate, loan_details.btc_start_rate)
-                    if (drop_percent < policy.pre_liquidation_threshold)
+                    let current_rate_ratio = calcRateRatio(cur_btc_rate, loan_details.btc_start_rate)
+                    if (current_rate_ratio > policy.pre_liquidation_threshold)
                         return reject("BTC rate hasn't dropped beyond threshold");
                     //calculate due amount
                     let due_amount = calcDueAmount(loan_details.loan_amount, loan_details.policy_id, loan_details.open_time)
@@ -1431,8 +1431,8 @@
                         getRate["USD"].then(cur_btc_rate => {
                             if (cur_btc_rate >= loan_details.btc_start_rate)
                                 return reject(RequestValidationError(TYPE_PRELIQUATE_COLLATERAL_REQUEST, "BTC rate hasn't reduced from the start rate"));
-                            let drop_percent = calcRateDropPercent(cur_btc_rate, loan_details.btc_start_rate)
-                            if (drop_percent < policy.pre_liquidation_threshold)
+                            let current_rate_ratio = calcRateRatio(cur_btc_rate, loan_details.btc_start_rate)
+                            if (current_rate_ratio > policy.pre_liquidation_threshold)
                                 return reject(RequestValidationError(TYPE_PRELIQUATE_COLLATERAL_REQUEST, "BTC rate hasn't dropped beyond threshold"));
                             resolve({ loan_details, liquidate_tx_hex });
                         }).catch(error => reject(error))
