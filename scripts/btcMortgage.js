@@ -5,8 +5,8 @@
 
     const APP_NAME = "BTCMortgage";
     const APP_IDENTIFIER = "BTC Mortgage";
-    const BANKER_ID = "FKAEdnPfjXLHSYwrXQu377ugN4tXU7VGdf";
-    const BANKER_PUBKEY = '032FCA79F94AF6D6BC4A90B93A55B81501618E1B670665D161334C0041A41C54C3';
+    const BANKER_ID = "F6uMddaTDCZgojENbqRnFo5PCknArE7dKz";
+    const BANKER_PUBKEY = '03EE0FB1868EE7D03BC741B10CD56057769445C7D37703115E428A93236C714E61';
 
     const CURRENCY = "USD";
     const ALLOWED_DEVIATION = 0.98, //ie, upto 2% of decrease in rate can be accepted in processing stage
