@@ -1,4 +1,4 @@
-(function (EXPORTS) { //floCloudAPI v2.4.5
+(function (EXPORTS) { //floCloudAPI v2.4.5a
     /* FLO Cloud operations to send/request application data*/
     'use strict';
     const floCloudAPI = EXPORTS;
@@ -551,7 +551,7 @@
     }
 
     //request any data from supernode cloud
-    const requestApplicationData = floCloudAPI.requestApplicationData = function (type, options = {}) {
+    const _requestApplicationData = function (type, options = {}) {
         return new Promise((resolve, reject) => {
             var request = {
                 receiverID: options.receiverID || DEFAULT.adminID,
@@ -579,6 +579,17 @@
                 singleRequest(request.receiverID, request, options.method || "GET")
                     .then(data => resolve(data)).catch(error => reject(error))
             }
+        })
+    }
+
+    floCloudAPI.requestApplicationData = function (type, options = {}) {
+        return new Promise((resolve, reject) => {
+            let single_request_mode = !(options.callback instanceof Function);
+            _requestApplicationData(type, options).then(data => {
+                if (single_request_mode)
+                    resolve(objectifier(data))
+                else resolve(data);
+            }).catch(error => reject(error))
         })
     }
 
@@ -615,7 +626,7 @@
             //request the data from cloud for resigning
             let req_options = Object.assign({}, options);
             req_options.atVectorClock = vectorClock;
-            requestApplicationData(undefined, req_options).then(result => {
+            _requestApplicationData(undefined, req_options).then(result => {
                 if (!result.length)
                     return reject("Data not found");
                 let data = result[0];
@@ -709,11 +720,11 @@
                     storeGeneral(fk, d);
                     options.callback(d, e)
                 }
-                requestApplicationData(type, new_options)
+                _requestApplicationData(type, new_options)
                     .then(result => resolve(result))
                     .catch(error => reject(error))
             } else {
-                requestApplicationData(type, options).then(dataSet => {
+                _requestApplicationData(type, options).then(dataSet => {
                     storeGeneral(fk, objectifier(dataSet))
                     resolve(dataSet)
                 }).catch(error => reject(error))
@@ -738,7 +749,7 @@
                 }
                 delete options.callback;
             }
-            requestApplicationData(objectName, options).then(dataSet => {
+            _requestApplicationData(objectName, options).then(dataSet => {
                 updateObject(objectName, objectifier(dataSet));
                 delete options.comment;
                 options.lowerVectorClock = lastVC[objectName] + 1;
@@ -746,11 +757,11 @@
                 if (callback) {
                     let new_options = Object.create(options);
                     new_options.callback = callback;
-                    requestApplicationData(objectName, new_options)
+                    _requestApplicationData(objectName, new_options)
                         .then(result => resolve(result))
                         .catch(error => reject(error))
                 } else {
-                    requestApplicationData(objectName, options).then(dataSet => {
+                    _requestApplicationData(objectName, options).then(dataSet => {
                         updateObject(objectName, objectifier(dataSet))
                         resolve(appObjects[objectName])
                     }).catch(error => reject(error))
@@ -825,7 +836,7 @@
     floCloudAPI.downloadFile = function (vectorClock, options = {}) {
         return new Promise((resolve, reject) => {
             options.atVectorClock = vectorClock;
-            requestApplicationData(options.type, options).then(result => {
+            _requestApplicationData(options.type, options).then(result => {
                 if (!result.length)
                     return reject("File not found");
                 result = result[0];
