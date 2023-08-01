@@ -242,7 +242,7 @@
         return new Promise((resolve, reject) => {
             const LASTTX_IDB_KEY = "U#" + floDapps.user.id;
             compactIDB.readData("lastTx", LASTTX_IDB_KEY).then(lastTx => {
-                var query_options = { sentOnly: true, tx: true, filter: d => typeof d == 'string' && d.startsWith(APP_IDENTIFIER) };
+                var query_options = { sentOnly: true, tx: true, filter: d => typeof d == 'string' && d.includes(APP_IDENTIFIER) };
                 if (typeof lastTx == 'number')  //lastTx is tx count (*backward support)
                     query_options.ignoreOld = lastTx;
                 else if (typeof lastTx == 'string') //lastTx is txid of last tx
@@ -254,7 +254,7 @@
                         let t = result.items[i];
                         if (t.data.startsWith(LOAN_DETAILS_IDENTIFIER))
                             p.push(validateAndStoreLoanOpenDetails(t));
-                        else if (t.data.startsWith(LOAN_CLOSING_IDENTIFIER))
+                        else if (t.data.includes(LOAN_CLOSING_IDENTIFIER))
                             p.push(validateAndStoreLoanCloseDetails(t))
                     }
                     p.push(compactIDB.writeData("lastTx", result.lastItem, LASTTX_IDB_KEY));
@@ -274,11 +274,15 @@
         return new Promise((resolve, reject) => {
             let loan_id = t.txid,
                 loan_details = parseLoanOpenData(t.data, t.txid, t.time);
-            validateLoanDetails(loan_details).then(result => {
-                compactIDB.addData("loans", loan_details, loan_id)
-                    .then(result => resolve(result))
-                    .catch(error => reject(error))
-            }).catch(_ => resolve(null)) //validation fails, no need to reject DB write
+            floBlockchainAPI.getTx(loan_details.loan_transfer_id).then(transfer_tx => {
+                let parsed_loan_transfer = parseLoanTransferData(transfer_tx.floData);
+                Object.assign(loan_details, parsed_loan_transfer);
+                validateLoanDetails(loan_details).then(result => {
+                    compactIDB.addData("loans", loan_details, loan_id)
+                        .then(result => resolve(result))
+                        .catch(error => reject(error))
+                }).catch(_ => resolve(null)) //validation fails, no need to reject DB write
+            })
         })
     }
 
