@@ -352,18 +352,49 @@
     }
 
     //Loan details on FLO blockchain
+
+    const LOAN_TRANSFER_IDENTIFIER = APP_IDENTIFIER + ":Loan transfer";
+    function stringifyLoanTransferData(borrower_sign, coborrower_sign) {
+        return [
+            LOAN_TRANSFER_IDENTIFIER,
+            "Signature-B:" + borrower_sign,
+            "Signature-C:" + coborrower_sign
+        ].join('|');
+        /*MAYDO: Maybe make it a worded sentence?
+            BTC Mortgage: 
+            L#${lender_floid} is lending ${loan_amount}USD (ref#${loan_transfer_id}) to B#${borrower_floid}
+            inaccoradance with policy#${policy_id} 
+            as mortgage on collateral#${collateral_id} (${btc_amount}BTC) provided by C#${coborrower_floid}.
+            Signed by B'${borrower_sign} , C'{coborrower_sign} and L'${lender_sign}    
+        */
+    }
+
+    function parseLoanTransferData(str) {
+        let splits = str.split('|');
+        if (splits[1] !== LOAN_TRANSFER_IDENTIFIER)
+            throw "Invalid Loan transfer data";
+        var details = {};
+        splits.forEach(s => {
+            let d = s.split(':');
+            switch (d[0]) {
+                case "Signature-B": details.borrower_sign = d[1]; break;
+                case "Signature-C": details.coborrower_sign = d[1]; break;
+            }
+        });
+        return details;
+    }
+
     const LOAN_DETAILS_IDENTIFIER = APP_IDENTIFIER + ":Loan details";
 
     function stringifyLoanOpenData(
         borrower, loan_amount, policy_id, btc_start_rate,
         coborrower, collateral_value, collateral_lock_id,
-        lender, loan_transfer_id,
-        borrower_sign, coborrower_sign, lender_sign
+        lender, loan_transfer_id, lender_sign
     ) {
         return [
             LOAN_DETAILS_IDENTIFIER,
             "Borrower:" + floCrypto.toFloID(borrower),
-            "Amount:" + loan_amount,
+            "Amount:" + loan_amount + CURRENCY,
             "Policy:" + policy_id,
             "CoBorrower:" + floCrypto.toFloID(coborrower),
             "CollateralValue:" + collateral_value + "BTC",
@@ -371,8 +402,6 @@
             "BTC price:" + btc_start_rate + "USD",
             "Lender:" + floCrypto.toFloID(lender),
             "TokenTransfer:" + loan_transfer_id,
-            "Signature-B:" + borrower_sign,
-            "Signature-C:" + coborrower_sign,
             "Signature-L:" + lender_sign
         ].join('|');
         /*MAYDO: Maybe make it a worded sentence?
@@ -398,11 +427,9 @@
                 case "CoBorrower": details.coborrower = d[1]; break;
                 case "CollateralValue": details.collateral_value = parseFloat(d[1]); break;
                 case "CollateralLock": details.collateral_lock_id = d[1]; break;
-                case "BTC price:": details.btc_start_rate = parseFloat(d[1]); break;
+                case "BTC price": details.btc_start_rate = parseFloat(d[1]); break;
                 case "Lender": details.lender = d[1]; break;
                 case "TokenTransfer": details.loan_transfer_id = d[1]; break;
-                case "Signature-B": details.borrower_sign = d[1]; break;
-                case "Signature-C": details.coborrower_sign = d[1]; break;
                 case "Signature-L": details.lender_sign = d[1]; break;
             }
         });
@@ -413,9 +440,13 @@
         return new Promise((resolve, reject) => {
             floBlockchainAPI.getTx(loan_id).then(tx => {
                 let parsed_loan_details = parseLoanOpenData(tx.floData, tx.txid, tx.time);
-                validateLoanDetails(parsed_loan_details)
-                    .then(_ => resolve(parsed_loan_details))
-                    .catch(error => reject(error))
+                floBlockchainAPI.getTx(parsed_loan_details.loan_transfer_id).then(transfer_tx => {
+                    let parsed_loan_transfer = parseLoanTransferData(transfer_tx.floData);
+                    Object.assign(parsed_loan_details, parsed_loan_transfer);
+                    validateLoanDetails(parsed_loan_details)
+                        .then(_ => resolve(parsed_loan_details))
+                        .catch(error => reject(error))
+                })
             }).catch(error => reject(error))
         })
     }
@@ -435,7 +466,7 @@
             //verify signatures
             if (!verify_borrowerSign(loan_details.borrower_sign, loan_details.borrower, loan_details.loan_amount, loan_details.policy_id, loan_details.coborrower, loan_details.lender))
                 return reject("Invalid borrower signature");
-            if (!verify_coborrowerSign(loan_details.coborrower_sign, loan_details.coborrower, loan_details.borrower_sign, loan_details.collateral_value, loan_details.collateral_lock_id))
+            if (!verify_coborrowerSign(loan_details.coborrower_sign, loan_details.coborrower, loan_details.borrower_sign, loan_details.btc_start_rate, loan_details.collateral_value, loan_details.collateral_lock_id))
                 return reject("Invalid coborrower signature");
             if (!verify_lenderSign(loan_details.lender_sign, loan_details.lender, loan_details.coborrower_sign, loan_details.loan_transfer_id))
                 return reject("Invalid lender signature");
@@ -1047,18 +1078,18 @@
                     return reject("Collateral is being used for a different loan in-process");
                 //transfer tokens for loan amount
                 let borrower_floID = floCrypto.toFloID(borrower);
-                floTokenAPI.sendToken(privKey, loan_amount, borrower_floID, "as loan", CURRENCY).then(token_txid => {
+                let transfer_appendix = stringifyLoanTransferData(borrower_sign, coborrower_sign);
+                floTokenAPI.sendToken(privKey, loan_amount, borrower_floID, "as loan|" + transfer_appendix, CURRENCY).then(token_txid => {
                     //construct the blockchain data
                     let lender_sign = sign_lender(privKey, coborrower_sign, token_txid);
-                    let blockchainData = stringifyLoanOpenData(
+                    let loan_blockchain_data = stringifyLoanOpenData(
                         borrower, loan_amount, policy_id, collateral.rate,
                         coborrower, collateral.quantity, collateral_lock_id,
-                        lender, token_txid,
-                        borrower_sign, coborrower_sign, lender_sign
+                        lender, token_txid, lender_sign
                     );
                     let receivers = [borrower, coborrower].map(addr => floCrypto.toFloID(addr));
                     //write loan details in blockchain
-                    floBlockchainAPI.writeDataMultiple([privKey], blockchainData, receivers).then(loan_txid => {
+                    floBlockchainAPI.writeDataMultiple([privKey], loan_blockchain_data, receivers).then(loan_txid => {
                         //add the collateral lock to owned list
                         owned_collateral_locks[collateral_lock_id] = loan_txid;
                         compactIDB.addData("owned_collateral_locks", loan_txid, collateral_lock_id);
@@ -1081,7 +1112,7 @@
                 //repay and close the loan
                 let closing_sign = sign_closing(privKey, loan_id, loan_details.lender_sign);
                 var closing_data = stringifyLoanCloseData(loan_id, loan_details.borrower, closing_sign);
-                floTokenAPI.sendToken(privKey, due_amount, loan_details.lender, "|" + closing_data, CURRENCY).then(closing_txid => {
+                floTokenAPI.sendToken(privKey, due_amount, loan_details.lender, "as repayment|" + closing_data, CURRENCY).then(closing_txid => {
                     //send message to coborrower as reminder to unlock collateral
                     floCloudAPI.sendApplicationData({ loan_id, closing_txid }, TYPE_LOAN_CLOSED_ACK, { receiverID: loan_details.coborrower })
                         .then(result => {
