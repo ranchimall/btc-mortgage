@@ -240,14 +240,14 @@
     //function to read all loan details of the user
     function readAllLoans() {
         return new Promise((resolve, reject) => {
-            const LASTTX_IDB_KEY = "U#" + floDapps.user.id;
+            let user_floID = floCrypto.toFloID(floDapps.user.id);
+            const LASTTX_IDB_KEY = "U#" + user_floID;
             compactIDB.readData("lastTx", LASTTX_IDB_KEY).then(lastTx => {
-                var query_options = { sentOnly: true, tx: true, filter: d => typeof d == 'string' && d.includes(APP_IDENTIFIER) };
+                var query_options = { tx: true, filter: d => typeof d == 'string' && d.includes(APP_IDENTIFIER) };
                 if (typeof lastTx == 'number')  //lastTx is tx count (*backward support)
                     query_options.ignoreOld = lastTx;
                 else if (typeof lastTx == 'string') //lastTx is txid of last tx
                     query_options.after = lastTx;
-                let user_floID = floCrypto.toFloID(floDapps.user.id);
                 floBlockchainAPI.readData(user_floID, query_options).then(result => {
                     let p = [];
                     for (var i = result.items.length - 1; i >= 0; i--) {
