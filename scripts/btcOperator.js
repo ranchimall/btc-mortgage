@@ -1,4 +1,4 @@
-(function (EXPORTS) { //btcOperator v1.1.4a
+(function (EXPORTS) { //btcOperator v1.1.4b
     /* BTC Crypto and API Operator */
     const btcOperator = EXPORTS;
 
@@ -65,8 +65,17 @@
                         let txid = resultText.match(/<txid>.*<\/txid>/).pop().replace('<txid>', '').replace('</txid>', '');
                         resolve(txid);
                     } else if (r == '0') {
-                        let error = resultText.match(/<response>.*<\/response>/).pop().replace('<response>', '').replace('</response>', '');
-                        reject(decodeURIComponent(error.replace(/\+/g, " ")));
+                        let error;
+                        if (resultText.match(/<response>.*<\/response>/))
+                            error = resultText.match(/<response>.*<\/response>/).pop().replace('<response>', '').replace('</response>', '');
+                        else if (resultText.match(/<message>.*<\/message>/))
+                            error = resultText.match(/<message>.*<\/message>/).pop().replace('<message>', '').replace('</message>', '');
+                        if (error)
+                            reject(decodeURIComponent(error.replace(/\+/g, " ")));
+                        else {
+                            console.error(resultText);
+                            reject("Unknown error")
+                        }
                     } else reject(resultText);
                 }
             }).catch(error => reject(error))
