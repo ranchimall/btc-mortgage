@@ -122,12 +122,12 @@
             duration = yearDiff(close_time, open_time);
         let interest_amount = loan_amount * policy.interest * duration;
         let due_amount = loan_amount + interest_amount;
-        return due_amount;
+        return toFixedDecimal(due_amount);
     }
 
     function calcRateRatio(current_rate, start_rate) {
         let rate_ratio = 1 + (current_rate - start_rate) / start_rate;
-        return rate_ratio;
+        return toFixedDecimal(rate_ratio);
     }
 
     function findLocker(coborrower_pubKey, lender_pubKey) {
@@ -342,7 +342,7 @@
         let splits = str.split('|');
         if (splits[0] !== LOAN_POLICY_IDENTIFIER)
             throw "Invalid Loan Policy data";
-        var details = { policy_creation_time: tx_time };
+        var details = { policy_creation_time: tx_time * 1000 }; //s to ms
         splits.forEach(s => {
             let d = s.split(':');
             switch (d[0]) {
@@ -377,7 +377,7 @@
         let splits = str.split('|');
         if (splits[1] !== LOAN_TRANSFER_IDENTIFIER)
             throw "Invalid Loan transfer data";
-        var details = { open_time: tx_time };
+        var details = { open_time: tx_time * 1000 }; //s to ms
         splits.forEach(s => {
             let d = s.split(':');
             switch (d[0]) {
@@ -421,7 +421,7 @@
         let splits = str.split('|');
         if (splits[0] !== LOAN_DETAILS_IDENTIFIER)
             throw "Invalid Loan blockchain data";
-        var details = { loan_id: txid, blocktime: tx_time };
+        var details = { loan_id: txid, blocktime: tx_time * 1000 }; //s to ms
         splits.forEach(s => {
             let d = s.split(':');
             switch (d[0]) {
@@ -530,7 +530,7 @@
         let splits = str.split('|');
         if (splits[1] !== LOAN_CLOSING_IDENTIFIER) //splits[0] will be token transfer
             throw "Invalid Loan closing data";
-        var details = { close_time: tx_time, close_id: txid };
+        var details = { close_id: txid, close_time: tx_time * 1000 }; //s to ms
         splits.forEach(s => {
             let d = s.split(':');
             switch (d[0]) {
@@ -542,10 +542,12 @@
         return details;
     }
 
-    const getLoanClosing = btcMortgage.getLoanClosing = function (closing_txid) {
+    const getLoanClosing = btcMortgage.getLoanClosing = function (loan_id, closing_txid) {
         return new Promise((resolve, reject) => {
             floBlockchainAPI.getTx(closing_txid).then(tx => {
                 let closing_details = parseLoanCloseData(tx.floData, tx.txid, tx.time);
+                if (loan_id !== closing_details.loan_id)
+                    return reject("Closing doesnot match the loan ID")
                 getLoanDetails(closing_details.loan_id).then(loan_details => {
                     validateLoanClosing(loan_details, closing_details)
                         .then(result => resolve(Object.assign(loan_details, closing_details)))
@@ -563,7 +565,7 @@
                 return reject("Invalid borrower floID");
             if (closing_details.borrower != loan_details.borrower)
                 return reject("Borrower ID is different");
-            if (verify_closingSign(closing_details.closing_sign, closing_details.borrower, closing_details.loan_id, loan_details.lender_sign))
+            if (!verify_closingSign(closing_details.closing_sign, closing_details.borrower, closing_details.loan_id, loan_details.lender_sign))
                 return reject("Invalid closing signature");
             validateLoanCloseTokenTransfer(closing_details.close_id, loan_details.borrower, loan_details.lender, loan_details.loan_amount, loan_details.policy_id, loan_details.open_time, closing_details.close_time)
                 .then(result => resolve(true))
@@ -1108,6 +1110,7 @@
         })
     }
 
+    //for retrying failsafe
     btcOperator.retryFailSafe = function (fail_safe_id) {
         return new Promise((resolve, reject) => {
             compactIDB.readData("fail_safe", fail_safe_id).then(fail_safe_data => {
@@ -1132,7 +1135,8 @@
                 //repay and close the loan
                 let closing_sign = sign_closing(privKey, loan_id, loan_details.lender_sign);
                 var closing_data = stringifyLoanCloseData(loan_id, loan_details.borrower, closing_sign);
-                floTokenAPI.sendToken(privKey, due_amount, loan_details.lender, "as repayment|" + closing_data, CURRENCY).then(closing_txid => {
+                let lender_floID = floCrypto.toFloID(loan_details.lender);
+                floTokenAPI.sendToken(privKey, due_amount, lender_floID, "as repayment|" + closing_data, CURRENCY).then(closing_txid => {
                     //send message to coborrower as reminder to unlock collateral
                     floCloudAPI.sendApplicationData({ loan_id, closing_txid }, TYPE_LOAN_CLOSED_ACK, { receiverID: loan_details.coborrower })
                         .then(result => {
@@ -1145,7 +1149,7 @@
     }
 
     //2. C: requests L or T to free collateral
-    btcMortgage.requestUnlockCollateral = function (loan_id, closing_txid, privKey) {
+    btcMortgage.requestUnlockCollateral = function (loan_id, closing_txid, privKey, toBanker = false) {
         return new Promise((resolve, reject) => {
             let coborrower_pubKey = floDapps.user.public;
             getLoanClosing(loan_id, closing_txid).then(loan_details => {
@@ -1156,7 +1160,7 @@
                 createUnlockCollateralTxHex(locker, loan_details.collateral_lock_id, privKey).then(unlock_tx_hex => {
                     floCloudAPI.sendApplicationData({
                         loan_id, closing_txid, unlock_tx_hex
-                    }, TYPE_UNLOCK_COLLATERAL_REQUEST, { receiverID: loan_details.lender })
+                    }, TYPE_UNLOCK_COLLATERAL_REQUEST, { receiverID: toBanker ? BANKER_ID : loan_details.lender })
                         .then(result => {
                             compactIDB.addData("outbox", result, result.vectorClock);
                             resolve(result);
@@ -1179,7 +1183,7 @@
                     //create the tx
                     const tx = coinjs.transaction();
                     //estimate the fee
-                    let estimate_tx_size = BASE_TX_SIZE;
+                    let estimate_tx_size = btcOperator.CONSTANTS.BASE_TX_SIZE;
                     estimate_tx_size += collateral_utxos.length * btcOperator.util.sizePerInput(locker.address, locker.redeemScript)
                     estimate_tx_size += btcOperator.util.sizePerOutput(collateral_owner);
                     btcOperator.util.get_fee_rate().then(fee_rate => {
@@ -1189,7 +1193,7 @@
                         collateral_utxos.forEach(u => {
                             //locker is btc bech32 multisig
                             let s = coinjs.script();
-                            s.writeBytes(Crypto.util.hexToBytes(rs));
+                            s.writeBytes(Crypto.util.hexToBytes(locker.redeemScript));
                             s.writeOp(0);
                             s.writeBytes(coinjs.numToBytes(u.value.toFixed(0), 8));
                             script = Crypto.util.bytesToHex(s.buffer);
@@ -1209,26 +1213,28 @@
         })
     }
 
-    //3. L: unlock collateral
+    //3. L/B: unlock collateral
     btcMortgage.unlockCollateral = function (loan_id, closing_txid, unlock_tx_hex, privKey) {
-        let lender_pubKey = floDapps.user.public;
-        getLoanClosing(loan_id, closing_txid).then(loan_details => {
-            //find locker
-            let coborrower_pubKey = extractPubKeyFromSign(loan_details.coborrower_sign);
-            let locker = findLocker(coborrower_pubKey, lender_pubKey)
-            //verify and sign the tx
-            signUnlockCollateralTxHex(locker, loan_details.collateral_lock_id, unlock_tx_hex, privKey).then(signed_tx_hex => {
-                btcOperator.broadcastTx(signed_tx_hex).then(txid => {
-                    floCloudAPI.sendApplicationData({
-                        loan_id, closing_txid, unlock_collateral_id: txid
-                    }, TYPE_UNLOCK_COLLATERAL_ACK, { receiverID: loan_details.coborrower })
-                        .then(result => {
-                            compactIDB.addData("outbox", result, result.vectorClock);
-                            resolve(result);
-                        }).catch(error => reject(error))
+        return new Promise((resolve, reject) => {
+            getLoanClosing(loan_id, closing_txid).then(loan_details => {
+                //find locker
+                let coborrower_pubKey = extractPubKeyFromSign(loan_details.coborrower_sign);
+                let lender_pubKey = extractPubKeyFromSign(loan_details.lender_sign);
+                let locker = findLocker(coborrower_pubKey, lender_pubKey)
+                //verify and sign the tx
+                signUnlockCollateralTxHex(locker, loan_details.collateral_lock_id, unlock_tx_hex, privKey).then(signed_tx_hex => {
+                    btcOperator.broadcastTx(signed_tx_hex).then(txid => {
+                        floCloudAPI.sendApplicationData({
+                            loan_id, closing_txid, unlock_collateral_id: txid
+                        }, TYPE_UNLOCK_COLLATERAL_ACK, { receiverID: loan_details.coborrower })
+                            .then(result => {
+                                compactIDB.addData("outbox", result, result.vectorClock);
+                                resolve(result);
+                            }).catch(error => reject(error))
+                    }).catch(error => reject(error))
                 }).catch(error => reject(error))
             }).catch(error => reject(error))
-        }).catch(error => reject(error))
+        })
     }
 
     function signUnlockCollateralTxHex(locker, collateral_lock_id, unlock_tx_hex, privKey) {
@@ -1499,7 +1505,7 @@
                     //create the tx
                     const tx = coinjs.transaction();
                     //estimate the fee
-                    let estimate_tx_size = BASE_TX_SIZE;
+                    let estimate_tx_size = btcOperator.CONSTANTS.BASE_TX_SIZE;
                     estimate_tx_size += collateral_utxos.length * btcOperator.util.sizePerInput(locker.address, locker.redeemScript)
                     estimate_tx_size += btcOperator.util.sizePerOutput(collateral_owner) + btcOperator.util.sizePerOutput(lender_btcID);
                     btcOperator.util.get_fee_rate().then(fee_rate => {
@@ -1509,7 +1515,7 @@
                         collateral_utxos.forEach(u => {
                             //locker is btc bech32 multisig
                             let s = coinjs.script();
-                            s.writeBytes(Crypto.util.hexToBytes(rs));
+                            s.writeBytes(Crypto.util.hexToBytes(locker.redeemScript));
                             s.writeOp(0);
                             s.writeBytes(coinjs.numToBytes(u.value.toFixed(0), 8));
                             script = Crypto.util.bytesToHex(s.buffer);
@@ -1523,7 +1529,8 @@
                         console.debug("LIQUIDATE", total_input_value, liquidate_amount, fee_estimate)
                         if (liquidate_amount < total_input_value) { //return remaining of collateral to collateral owner(coborrower)
                             let return_amount = total_input_value - liquidate_amount;
-                            tx.addoutput(collateral_owner, return_amount);
+                            if (return_amount > btcOperator.CONSTANTS.DUST_AMT) //only if return-part is more than dust
+                                tx.addoutput(collateral_owner, return_amount);
                         }
                         tx.sign(privKey, 1 /*sighashtype*/);
                         resolve(tx.serialize())
