@@ -275,7 +275,7 @@
             let loan_id = t.txid,
                 loan_details = parseLoanOpenData(t.data, t.txid, t.time);
             floBlockchainAPI.getTx(loan_details.loan_transfer_id).then(transfer_tx => {
-                let parsed_loan_transfer = parseLoanTransferData(transfer_tx.floData);
+                let parsed_loan_transfer = parseLoanTransferData(transfer_tx.floData, transfer_tx.time);
                 Object.assign(loan_details, parsed_loan_transfer);
                 validateLoanDetails(loan_details).then(result => {
                     compactIDB.addData("loans", loan_details, loan_id)
@@ -373,11 +373,11 @@
         */
     }
 
-    function parseLoanTransferData(str) {
+    function parseLoanTransferData(str, tx_time) {
         let splits = str.split('|');
         if (splits[1] !== LOAN_TRANSFER_IDENTIFIER)
             throw "Invalid Loan transfer data";
-        var details = {};
+        var details = { open_time: tx_time };
         splits.forEach(s => {
             let d = s.split(':');
             switch (d[0]) {
@@ -421,7 +421,7 @@
         let splits = str.split('|');
         if (splits[0] !== LOAN_DETAILS_IDENTIFIER)
             throw "Invalid Loan blockchain data";
-        var details = { loan_id: txid, open_time: tx_time };
+        var details = { loan_id: txid, blocktime: tx_time };
         splits.forEach(s => {
             let d = s.split(':');
             switch (d[0]) {
@@ -445,7 +445,7 @@
             floBlockchainAPI.getTx(loan_id).then(tx => {
                 let parsed_loan_details = parseLoanOpenData(tx.floData, tx.txid, tx.time);
                 floBlockchainAPI.getTx(parsed_loan_details.loan_transfer_id).then(transfer_tx => {
-                    let parsed_loan_transfer = parseLoanTransferData(transfer_tx.floData);
+                    let parsed_loan_transfer = parseLoanTransferData(transfer_tx.floData, transfer_tx.time);
                     Object.assign(parsed_loan_details, parsed_loan_transfer);
                     validateLoanDetails(parsed_loan_details)
                         .then(_ => resolve(parsed_loan_details))
