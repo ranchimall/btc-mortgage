@@ -1,4 +1,4 @@
-(function (EXPORTS) { //floCrypto v2.3.6a
+(function (EXPORTS) { //floCrypto v2.3.6b
     /* FLO Crypto Operators */
     'use strict';
     const floCrypto = EXPORTS;
@@ -121,6 +121,7 @@
 
     //Sign data using private-key
     floCrypto.signData = function (data, privateKeyHex) {
+        if (typeof privateKeyHex !== "string") throw new Error("No private key found.");
         var key = new Bitcoin.ECKey(privateKeyHex);
         var messageHash = Crypto.SHA256(data);
         var messageSign = Bitcoin.ECDSA.sign(messageHash, key.priv);

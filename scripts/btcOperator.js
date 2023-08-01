@@ -1,4 +1,4 @@
-(function (EXPORTS) { //btcOperator v1.1.4
+(function (EXPORTS) { //btcOperator v1.1.4a
     /* BTC Crypto and API Operator */
     const btcOperator = EXPORTS;
 
@@ -462,6 +462,7 @@
                 n: u.tx_output_n,
                 value: u.value,
                 value_hex: u.value_hex,
+                confirmations: u.confirmations,
                 script: u.script
             })))
         }).catch(error => reject(error))
