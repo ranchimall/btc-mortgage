@@ -186,7 +186,7 @@
 
     function initDB() {
         return new Promise((resolve, reject) => {
-            let obs = { lastTx: {}, policies: {}, loans: {}, outbox: {}, inbox: {}, owned_collateral_locks: {} }
+            let obs = { lastTx: {}, policies: {}, loans: {}, outbox: {}, inbox: {}, owned_collateral_locks: {}, fail_safe: {} }
             compactIDB.initDB(util.USER_DB, obs).then(result => {
                 compactIDB.setDefaultDB(util.USER_DB);
                 resolve(APP_IDENTIFIER + " user DB initiated");
@@ -1084,6 +1084,9 @@
                 let borrower_floID = floCrypto.toFloID(borrower);
                 let transfer_appendix = stringifyLoanTransferData(borrower_sign, coborrower_sign);
                 floTokenAPI.sendToken(privKey, loan_amount, borrower_floID, "as loan|" + transfer_appendix, CURRENCY).then(token_txid => {
+                    //add the collateral lock to owned list
+                    owned_collateral_locks[collateral_lock_id] = token_txid;
+                    compactIDB.addData("owned_collateral_locks", token_txid, collateral_lock_id);
                     //construct the blockchain data
                     let lender_sign = sign_lender(privKey, coborrower_sign, token_txid);
                     let loan_blockchain_data = stringifyLoanOpenData(
@@ -1093,15 +1096,28 @@
                     );
                     let receivers = [borrower, coborrower].map(addr => floCrypto.toFloID(addr));
                     //write loan details in blockchain
-                    floBlockchainAPI.writeDataMultiple([privKey], loan_blockchain_data, receivers).then(loan_txid => {
-                        //add the collateral lock to owned list
-                        owned_collateral_locks[collateral_lock_id] = loan_txid;
-                        compactIDB.addData("owned_collateral_locks", loan_txid, collateral_lock_id);
-                        resolve(loan_txid);
-                    }).catch(error => reject(error))
+                    floBlockchainAPI.writeDataMultiple([privKey], loan_blockchain_data, receivers)
+                        .then(loan_txid => resolve(loan_txid))
+                        .catch(error => {
+                            compactIDB.writeData("fail_safe", loan_blockchain_data, token_txid); //fail-safe mech if token is transfered but details not added to blockchain. this helps to retry fail-safe
+                            reject({ error, fail_safe: token_txid })
+                        })
                 }).catch(error => reject(error))
             }).catch(error => reject(error))
 
+        })
+    }
+
+    btcOperator.retryFailSafe = function (fail_safe_id) {
+        return new Promise((resolve, reject) => {
+            compactIDB.readData("fail_safe", fail_safe_id).then(fail_safe_data => {
+                let { borrower, coborrower } = parseLoanOpenData(fail_safe_data);
+                let receivers = [borrower, coborrower].map(addr => floCrypto.toFloID(addr));
+                floBlockchainAPI.writeDataMultiple([privKey], loan_blockchain_data, receivers).then(loan_txid => {
+                    compactIDB.removeData("fail_safe", fail_safe_id);   //remove fail safe as data is added to blockchain
+                    resolve(loan_txid)
+                }).catch(error => reject(error))
+            }).catch(error => reject(error))
         })
     }
 
