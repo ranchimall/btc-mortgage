@@ -1,7 +1,7 @@
 (function (EXPORTS) {
     const btcMortgage = EXPORTS;
 
-    //USERS: B: Borrower, L: Lender, C: Collateral provider, T: Trusted banker (us)
+    //USERS: B: Borrower, L: Lender, C: Coborrower/Collateral provider, T: Trusted banker (us)
 
     const APP_NAME = "BTCMortgage";
     const APP_IDENTIFIER = "BTC Mortgage";
@@ -1213,7 +1213,7 @@
         })
     }
 
-    //3. L/B: unlock collateral
+    //3. L/T: unlock collateral
     btcMortgage.unlockCollateral = function (loan_id, closing_txid, unlock_tx_hex, privKey) {
         return new Promise((resolve, reject) => {
             getLoanClosing(loan_id, closing_txid).then(loan_details => {
