@@ -29,8 +29,8 @@
         TYPE_REFUND_COLLATERAL_ACK = "type_refund_collateral_ack",
         TYPE_LIQUATE_COLLATERAL_REQUEST = "type_liquate_collateral_request",
         TYPE_LIQUATE_COLLATERAL_ACK = "type_liquate_collateral_ack",
-        TYPE_PRELIQUATE_COLLATERAL_REQUEST = "type_preliquate_collateral_request";
-    TYPE_PRELIQUATE_COLLATERAL_ACK = "type_preliquate_collateral_ack";
+        TYPE_PRELIQUATE_COLLATERAL_REQUEST = "type_preliquate_collateral_request",
+        TYPE_PRELIQUATE_COLLATERAL_ACK = "type_preliquate_collateral_ack";
 
     const POLICIES = {}, LOANS = {};
     const owned_collateral_locks = {};
@@ -255,7 +255,9 @@
                         if (t.data.startsWith(LOAN_DETAILS_IDENTIFIER))
                             p.push(validateAndStoreLoanOpenDetails(t));
                         else if (t.data.includes(LOAN_CLOSING_IDENTIFIER))
-                            p.push(validateAndStoreLoanCloseDetails(t))
+                            p.push(validateAndStoreLoanCloseDetails(t));
+                        else if (t.data.includes(LOAN_FAILURE_IDENTIFIER) && t.senders.has(BANKER_ID)) //Failure data can only be sent by banker
+                            p.push(validateAndStoreLoanFailDetails(t));
                     }
                     p.push(compactIDB.writeData("lastTx", result.lastItem, LASTTX_IDB_KEY));
                     Promise.all(p).then(_ => {
@@ -297,6 +299,27 @@
                 validateLoanClosing(loan_details, closing_details).then(result => {
                     let loan_id = loan_details.loan_id;
                     Object.assign(loan_details, closing_details);
+                    compactIDB.writeData("loans", loan_details, loan_id)
+                        .then(result => resolve(result))
+                        .catch(error => reject(error))
+                }).catch(_ => resolve(null)) //validation fails, no need to reject DB write
+            }).catch(error => reject(error))
+        })
+    }
+
+    function validateAndStoreLoanFailDetails(t) {
+        return new Promise((resolve, reject) => {
+            if (!t.senders.has(BANKER_ID)) //Data not authorised by banker, abort
+                return resolve(null);
+            let failure_details = parseLoanFailData(t.data, t.txid, t.time);
+            compactIDB.readData("loans", failure_details.loan_id).then(loan_details => {
+                if (!loan_details) {
+                    console.warn(`Loan#${failure_details.loan_id} not found in local DB`)
+                    return resolve(null);
+                }
+                validateLoanFailure(loan_details, failure_details).then(result => {
+                    let loan_id = loan_details.loan_id;
+                    Object.assign(loan_details, failure_details);
                     compactIDB.writeData("loans", loan_details, loan_id)
                         .then(result => resolve(result))
                         .catch(error => reject(error))
@@ -403,7 +426,7 @@
             "CoBorrower:" + floCrypto.toFloID(coborrower),
             "CollateralValue:" + collateral_value + "BTC",
             "CollateralLock:" + collateral_lock_id,
-            "BTC price:" + btc_start_rate + "USD",
+            "BTC rate:" + btc_start_rate + "USD",
             "Lender:" + floCrypto.toFloID(lender),
             "TokenTransfer:" + loan_transfer_id,
             "Signature-L:" + lender_sign
@@ -431,7 +454,7 @@
                 case "CoBorrower": details.coborrower = d[1]; break;
                 case "CollateralValue": details.collateral_value = parseFloat(d[1]); break;
                 case "CollateralLock": details.collateral_lock_id = d[1]; break;
-                case "BTC price": details.btc_start_rate = parseFloat(d[1]); break;
+                case "BTC price": case "BTC rate": details.btc_start_rate = parseFloat(d[1]); break;
                 case "Lender": details.lender = d[1]; break;
                 case "TokenTransfer": details.loan_transfer_id = d[1]; break;
                 case "Signature-L": details.lender_sign = d[1]; break;
@@ -591,6 +614,66 @@
                     return reject("Token amount is less than loan repayment amount");
                 resolve(true);
             }).catch(error => reject(error))
+        })
+    }
+
+    //Loan failure can only be written by Trusted banker (T)
+    const LOAN_FAILURE_IDENTIFIER = APP_IDENTIFIER + ":Loan failure";
+    function stringifyLoanFailData(loan_id, liquidation_id, btc_liquid_rate, lender, liquidation_sign) {
+        return [
+            LOAN_FAILURE_IDENTIFIER,
+            "Lender:" + floCrypto.toFloID(lender),
+            "Loan ID:" + loan_id,
+            "Liquidation:" + liquidation_id,
+            "BTC rate:" + btc_liquid_rate + "USD",
+            "Signature:" + liquidation_sign
+        ].join('|');
+    }
+
+    function parseLoanFailData(str, txid, tx_time) {
+        let splits = str.split('|');
+        if (splits[0] !== LOAN_FAILURE_IDENTIFIER) //splits[0] will be token transfer
+            throw "Invalid Loan failure data";
+        var details = { fail_id: txid, fail_time: tx_time * 1000 }; //s to ms
+        splits.forEach(s => {
+            let d = s.split(':');
+            switch (d[0]) {
+                case "Lender": details.lender = d[1]; break;
+                case "Loan ID": details.loan_id = d[1]; break;
+                case "Liquidation": details.liquidation_id = d[1]; break;
+                case "BTC rate": details.btc_liquid_rate = parseFloat(d[1]); break;
+                case "Signature": details.liquidation_sign = d[1]; break;
+            }
+        });
+        return details;
+    }
+
+    const getLoanFailure = btcMortgage.getLoanFailure = function (loan_id, failure_txid) {
+        return new Promise((resolve, reject) => {
+            floBlockchainAPI.getTx(failure_txid).then(tx => {
+                let failure_details = parseLoanFailData(tx.floData, tx.txid, tx.time);
+                if (loan_id !== failure_details.loan_id)
+                    return reject("Failure doesnot match the loan ID")
+                getLoanDetails(failure_details.loan_id).then(loan_details => {
+                    validateLoanFailure(loan_details, failure_details)
+                        .then(result => resolve(Object.assign(loan_details, failure_details)))
+                        .catch(error => reject(error))
+                }).catch(error => reject(error))
+            }).catch(error => reject(error))
+        })
+    }
+
+    const validateLoanFailure = btcMortgage.validateLoanFailure = function (loan_details, failure_details) {
+        return new Promise((resolve, reject) => {
+            if (failure_details.loan_id !== loan_details.loan_id)
+                return reject("Failure doesnot belong to this loan")
+            if (!floCrypto.validateFloID(failure_details.lender))
+                return reject("Invalid lender floID");
+            if (failure_details.lender != loan_details.lender)
+                return reject("Lender ID is different");
+            if (!verify_liquidationSign(failure_details.liquidation_sign, failure_details.lender, failure_details.loan_id, loan_details.lender_sign, failure_details.btc_liquid_rate))
+                return reject("Invalid closing signature");
+            resolve(true)
         })
     }
 
@@ -758,11 +841,47 @@
         else return false;
     }
 
+    //Signed by lender when requesting liquidation
+    const LIQUIDATE_IDENTIFIER = "liquidate";
+    function sign_liquidation(privKey, loan_id, btc_liquid_rate, lender_sign) {
+        let lender_floID = floCrypto.toFloID(floDapps.user.id)
+        //validate values before signing
+        if (!floCrypto.verifyPrivKey(privKey, lender_floID))
+            throw "Invalid Private key for lender";
+        if (typeof loan_id !== 'string' || !TXID_REGEX.test(loan_id))
+            throw "Invalid loan id";
+        //sign the value-data
+        let timestamp = Date.now();
+        let doc_array = [timestamp, LIQUIDATE_IDENTIFIER, loan_id, lender_sign, btc_liquid_rate];
+        let sign_part = floCrypto.signData(doc_array.join("|"), privKey);
+        let pubKey = floCrypto.getPubKeyHex(privKey);
+        let liquidation_sign = [pubKey, sign_part, timestamp].join(".")
+        return liquidation_sign;
+    }
+
+    function verify_liquidationSign(liquidation_sign, lender, loan_id, lender_sign, btc_liquid_rate) {
+        //split the signature part
+        let sign_splits = liquidation_sign.split('.');
+        let lender_pubKey = sign_splits[0],
+            sign_part = sign_splits[1],
+            timestamp = sign_splits[2];
+        //validate values
+        if (!floCrypto.verifyPubKey(lender_pubKey, lender))
+            throw "Invalid public key";
+        //verify the signature
+        let doc_array = [timestamp, LIQUIDATE_IDENTIFIER, loan_id, lender_sign, btc_liquid_rate];
+        if (floCrypto.verifySign(doc_array.join("|"), sign_part, lender_pubKey))
+            return timestamp;
+        else return false;
+    }
+
+
     btcMortgage.verify = {
         borrower_sign: verify_borrowerSign,
         coborrower_sign: verify_coborrowerSign,
         lender_sign: verify_lenderSign,
-        closing_sign: verify_closingSign
+        closing_sign: verify_closingSign,
+        liquidation_sign: verify_liquidationSign
     }
 
     const validateRequest = btcMortgage.validateRequest = {};
@@ -1340,14 +1459,20 @@
                 let due_amount = calcDueAmount(loan_details.loan_amount, loan_details.policy_id, loan_details.open_time)
                 //create tx hex for liquidation and send to banker
                 let coborrower_pubKey = extractPubKeyFromSign(loan_details.coborrower_sign);
-                createLiquidateCollateralTxHex(coborrower_pubKey, lender_pubKey, loan_details.collateral_lock_id, due_amount, privKey).then(txHex => {
-                    floCloudAPI.sendApplicationData({
-                        loan_id, liquidate_tx_hex: txHex
-                    }, TYPE_LIQUATE_COLLATERAL_REQUEST)
-                        .then(result => {
-                            compactIDB.addData("outbox", result, result.vectorClock);
-                            resolve(result);
-                        }).catch(error => reject(error))
+                getRate["BTC"]().then(rate => {
+                    let liquidate_amount = toFixedDecimal(due_amount / rate); //USD to BTC
+                    createLiquidateCollateralTxHex(coborrower_pubKey, lender_pubKey, loan_details.collateral_lock_id, liquidate_amount, privKey).then(txHex => {
+                        let liquidation_sign = sign_liquidation(privKey, loan_id, rate, loan_details.lender_sign)
+                        floCloudAPI.sendApplicationData({
+                            borrower, coborrower, lender,
+                            loan_id, liquidation_sign, btc_liquid_rate: rate,
+                            liquidate_tx_hex: txHex
+                        }, TYPE_LIQUATE_COLLATERAL_REQUEST)
+                            .then(result => {
+                                compactIDB.addData("outbox", result, result.vectorClock);
+                                resolve(result);
+                            }).catch(error => reject(error))
+                    }).catch(error => reject(error))
                 }).catch(error => reject(error))
             }).catch(error => reject(error))
         })
@@ -1356,22 +1481,34 @@
     btcMortgage.banker.liquateCollateral = function (collateral_liquate_req_id, privKey) {
         return new Promise((resolve, reject) => {
             validate_liquateCollateral_request(collateral_liquate_req_id).then(result => {
-                let { loan_details, liquidate_tx_hex } = result;
+                let { loan_details, liquidate_tx_hex, btc_liquid_rate, liquidation_sign } = result;
                 //calculate due amount
                 let due_amount = calcDueAmount(loan_details.loan_amount, loan_details.policy_id, loan_details.open_time)
-                //sign 
+                //sign btc tx
                 let coborrower_pubKey = extractPubKeyFromSign(loan_details.coborrower_sign);
                 let lender_pubKey = extractPubKeyFromSign(loan_details.lender_sign);
-                getRate["BTC"]().then(rate => {
-                    due_amount = toFixedDecimal(due_amount / rate); //USD to BTC
-                    signLiquidateCollateralTxHex(coborrower_pubKey, lender_pubKey, loan_details.collateral_lock_id, liquidate_tx_hex, due_amount, privKey).then(txHex => {
-                        floCloudAPI.sendApplicationData({
-                            loan_id, liquidate_tx_hex: txHex
-                        }, TYPE_LIQUATE_COLLATERAL_ACK)
-                            .then(result => {
-                                compactIDB.addData("outbox", result, result.vectorClock);
-                                resolve(result);
-                            }).catch(error => reject(error))
+                getRate["BTC"]().then(cur_rate => {
+                    if (cur_rate < btc_liquid_rate * ALLOWED_DEVIATION || cur_rate * ALLOWED_DEVIATION > btc_liquid_rate)
+                        return reject(RequestValidationError(TYPE_LIQUATE_COLLATERAL_REQUEST, "BTC rate has reduced beyond allowed threshold"))
+                    let liquidate_amount = toFixedDecimal(due_amount / rate); //USD to BTC
+                    signLiquidateCollateralTxHex(coborrower_pubKey, lender_pubKey, loan_details.collateral_lock_id, liquidate_tx_hex, liquidate_amount, privKey).then(signed_tx_hex => {
+                        btcOperator.broadcastTx(signed_tx_hex).then(liquidation_id => {
+                            //write loan failure data in FLO blockchain
+                            let loan_failure_data = stringifyLoanFailData(loan_details.loan_id, liquidation_id, btc_liquid_rate, loan_details.lender, liquidation_sign);
+                            let receivers = [loan_details.borrower, loan_details.coborrower, loan_details.lender].map(addr => floCrypto.toFloID(addr));
+                            floBlockchainAPI.writeDataMultiple([privKey], loan_failure_data, receivers).then(fail_ack_id => {
+                                floCloudAPI.sendApplicationData({
+                                    collateral_liquate_req_id, liquidation_id, fail_ack_id
+                                }, TYPE_LIQUATE_COLLATERAL_ACK, { receiverID: loan_details.lender })
+                                    .then(result => {
+                                        compactIDB.addData("outbox", result, result.vectorClock);
+                                        resolve(result);
+                                    }).catch(error => reject(error))
+                            }).catch(error => {
+                                compactIDB.writeData("fail_safe", loan_blockchain_data, token_txid); //fail-safe mech if token is transfered but details not added to blockchain. this helps to retry fail-safe
+                                reject({ error, fail_safe: token_txid })
+                            })
+                        }).catch(error => reject(error))
                     }).catch(error => reject(error))
                 }).catch(error => reject(error))
             }).catch(error => reject(error))
@@ -1384,14 +1521,16 @@
                 collateral_liquate_req = collateral_liquate_req[collateral_liquate_req_id];
                 if (!collateral_liquate_req)
                     return reject(RequestValidationError(TYPE_LIQUATE_COLLATERAL_REQUEST, "request not found"));
-                let { loan_id, liquidate_tx_hex } = collateral_liquate_req.message;
+                let { loan_id, liquidation_sign, btc_liquid_rate, liquidate_tx_hex } = collateral_liquate_req.message;
                 getLoanDetails(loan_id).then(loan_details => {
                     if (!floCrypto.isSameAddr(loan_details.lender, collateral_liquate_req.senderID))
                         return reject(RequestValidationError(TYPE_LIQUATE_COLLATERAL_REQUEST, "request not sent by lender"));
-                    checkIfLoanClosed(loan, loan_details.borrower, loan_details.lender).then(close_id => {
-                        if (close_id) //close loan data found
+                    if (!verify_liquidationSign(liquidation_sign, loan_details.lender, loan_id, loan_details.lender_sign, btc_liquid_rate))
+                        return reject("Invalid liquiadtion signature");
+                    checkIfLoanClosedFailed(loan, loan_details.borrower, loan_details.lender).then(result => {
+                        if (result) //close/fail loan data found
                             return reject(RequestValidationError(TYPE_LIQUATE_COLLATERAL_REQUEST, "Loan already closed"));
-                        else resolve({ loan_details, liquidate_tx_hex });
+                        else resolve({ loan_details, liquidate_tx_hex, btc_liquid_rate, liquidation_sign });
                     }).catch(error => reject(error))
                 }).catch(error => reject(error))
             }).catch(error => reject(error))
@@ -1416,14 +1555,19 @@
                     let due_amount = calcDueAmount(loan_details.loan_amount, loan_details.policy_id, loan_details.open_time)
                     //create tx hex for liquidation and send to banker
                     let coborrower_pubKey = extractPubKeyFromSign(loan_details.coborrower_sign);
-                    createLiquidateCollateralTxHex(coborrower_pubKey, lender_pubKey, loan_details.collateral_lock_id, due_amount, privKey).then(txHex => {
-                        floCloudAPI.sendApplicationData({
-                            loan_id, liquidate_tx_hex: txHex
-                        }, TYPE_PRELIQUATE_COLLATERAL_REQUEST)
-                            .then(result => {
-                                compactIDB.addData("outbox", result, result.vectorClock);
-                                resolve(result);
-                            }).catch(error => reject(error))
+                    getRate["BTC"]().then(rate => {
+                        let liquidate_amount = toFixedDecimal(due_amount / rate); //USD to BTC
+                        createLiquidateCollateralTxHex(coborrower_pubKey, lender_pubKey, loan_details.collateral_lock_id, liquidate_amount, privKey).then(txHex => {
+                            let liquidation_sign = sign_liquidation(privKey, loan_id, rate, loan_details.lender_sign)
+                            floCloudAPI.sendApplicationData({
+                                loan_id, liquidation_sign,
+                                liquidate_tx_hex: txHex
+                            }, TYPE_PRELIQUATE_COLLATERAL_REQUEST)
+                                .then(result => {
+                                    compactIDB.addData("outbox", result, result.vectorClock);
+                                    resolve(result);
+                                }).catch(error => reject(error))
+                        }).catch(error => reject(error))
                     }).catch(error => reject(error))
                 }).catch(error => reject(error))
             }).catch(error => reject(error))
@@ -1433,22 +1577,34 @@
     btcMortgage.banker.preliquateCollateral = function (collateral_preliquate_req_id, privKey) {
         return new Promise((resolve, reject) => {
             validate_preliquateCollateral_request(collateral_preliquate_req_id).then(result => {
-                let { loan_details, liquidate_tx_hex } = result;
+                let { loan_details, liquidate_tx_hex, btc_liquid_rate, liquidation_sign } = result;
                 //calculate due amount
                 let due_amount = calcDueAmount(loan_details.loan_amount, loan_details.policy_id, loan_details.open_time)
-                //sign 
+                //sign the btc tx
                 let coborrower_pubKey = extractPubKeyFromSign(loan_details.coborrower_sign);
                 let lender_pubKey = extractPubKeyFromSign(loan_details.lender_sign);
                 getRate["BTC"]().then(rate => {
-                    due_amount = toFixedDecimal(due_amount / rate); //USD to BTC
-                    signLiquidateCollateralTxHex(coborrower_pubKey, lender_pubKey, loan_details.collateral_lock_id, liquidate_tx_hex, due_amount, privKey).then(txHex => {
-                        floCloudAPI.sendApplicationData({
-                            loan_id, liquidate_tx_hex: txHex
-                        }, TYPE_PRELIQUATE_COLLATERAL_ACK)
-                            .then(result => {
-                                compactIDB.addData("outbox", result, result.vectorClock);
-                                resolve(result);
-                            }).catch(error => reject(error))
+                    if (cur_rate < btc_liquid_rate * ALLOWED_DEVIATION || cur_rate * ALLOWED_DEVIATION > btc_liquid_rate)
+                        return reject(RequestValidationError(TYPE_LIQUATE_COLLATERAL_REQUEST, "BTC rate has reduced beyond allowed threshold"))
+                    let liquidate_amount = toFixedDecimal(due_amount / rate); //USD to BTC
+                    signLiquidateCollateralTxHex(coborrower_pubKey, lender_pubKey, loan_details.collateral_lock_id, liquidate_tx_hex, liquidate_amount, privKey).then(signed_tx_hex => {
+                        btcOperator.broadcastTx(signed_tx_hex).then(liquidation_id => {
+                            //write loan failure data in FLO blockchain
+                            let loan_failure_data = stringifyLoanFailData(loan_details.loan_id, liquidation_id, btc_liquid_rate, loan_details.lender, liquidation_sign);
+                            let receivers = [loan_details.borrower, loan_details.coborrower, loan_details.lender].map(addr => floCrypto.toFloID(addr));
+                            floBlockchainAPI.writeDataMultiple([privKey], loan_failure_data, receivers).then(fail_ack_id => {
+                                floCloudAPI.sendApplicationData({
+                                    collateral_liquate_req_id, liquidation_id, fail_ack_id
+                                }, TYPE_LIQUATE_COLLATERAL_ACK, { receiverID: loan_details.lender })
+                                    .then(result => {
+                                        compactIDB.addData("outbox", result, result.vectorClock);
+                                        resolve(result);
+                                    }).catch(error => reject(error))
+                            }).catch(error => {
+                                compactIDB.writeData("fail_safe", loan_blockchain_data, token_txid); //fail-safe mech if token is transfered but details not added to blockchain. this helps to retry fail-safe
+                                reject({ error, fail_safe: token_txid })
+                            })
+                        }).catch(error => reject(error))
                     }).catch(error => reject(error))
                 }).catch(error => reject(error))
             }).catch(error => reject(error))
@@ -1461,12 +1617,14 @@
                 collateral_preliquate_req = collateral_preliquate_req[collateral_preliquate_req_id];
                 if (!collateral_preliquate_req)
                     return reject(RequestValidationError(TYPE_PRELIQUATE_COLLATERAL_REQUEST, "request not found"));
-                let { loan_id, liquidate_tx_hex } = collateral_preliquate_req.message;
+                let { loan_id, liquidation_sign, btc_liquid_rate, liquidate_tx_hex } = collateral_preliquate_req.message;
                 getLoanDetails(loan_id).then(loan_details => {
                     if (!floCrypto.isSameAddr(loan_details.lender, collateral_preliquate_req.senderID))
                         return reject(RequestValidationError(TYPE_PRELIQUATE_COLLATERAL_REQUEST, "request not sent by lender"));
-                    checkIfLoanClosed(loan, loan_details.borrower, loan_details.lender).then(close_id => {
-                        if (close_id) //close loan data found
+                    if (!verify_liquidationSign(liquidation_sign, loan_details.lender, loan_id, loan_details.lender_sign, btc_liquid_rate))
+                        return reject("Invalid liquiadtion signature");
+                    checkIfLoanClosedFailed(loan, loan_details.borrower, loan_details.lender).then(result => {
+                        if (result) //close/fail loan data found
                             return reject(RequestValidationError(TYPE_PRELIQUATE_COLLATERAL_REQUEST, "Loan already closed"));
                         let policy = POLICIES[loan_details.policy_id];
                         if (isNaN(policy.pre_liquidation_threshold))
@@ -1477,7 +1635,7 @@
                             let current_rate_ratio = calcRateRatio(cur_btc_rate, loan_details.btc_start_rate)
                             if (current_rate_ratio > policy.pre_liquidation_threshold)
                                 return reject(RequestValidationError(TYPE_PRELIQUATE_COLLATERAL_REQUEST, "BTC rate hasn't dropped beyond threshold"));
-                            resolve({ loan_details, liquidate_tx_hex });
+                            resolve({ loan_details, liquidate_tx_hex, btc_liquid_rate, liquidation_sign });
                         }).catch(error => reject(error))
                     }).catch(error => reject(error))
                 }).catch(error => reject(error))
@@ -1485,7 +1643,7 @@
         })
     }
 
-    function createLiquidateCollateralTxHex(coborrower_pubKey, lender_pubKey, collateral_lock_id, due_amount, privKey) {
+    function createLiquidateCollateralTxHex(coborrower_pubKey, lender_pubKey, collateral_lock_id, liquidate_amount, privKey) {
         return new Promise((resolve, reject) => {
             //find locker, pubkeys and ids
             let locker = findLocker(coborrower_pubKey, lender_pubKey),
@@ -1524,7 +1682,6 @@
                         });
                         total_input_value = btcOperator.util.Sat_to_BTC(total_input_value); //convert from satoshi to BTC
                         //add output
-                        let liquidate_amount = due_amount / fee_rate; //convert due amount to equivalent BTC amount
                         tx.addoutput(lender_btcID, liquidate_amount - fee_estimate);
                         console.debug("LIQUIDATE", total_input_value, liquidate_amount, fee_estimate)
                         if (liquidate_amount < total_input_value) { //return remaining of collateral to collateral owner(coborrower)
@@ -1540,7 +1697,7 @@
         })
     }
 
-    function signLiquidateCollateralTxHex(coborrower_pubKey, lender_pubKey, collateral_lock_id, unlock_tx_hex, due_amount, privKey) {
+    function signLiquidateCollateralTxHex(coborrower_pubKey, lender_pubKey, collateral_lock_id, unlock_tx_hex, liquidate_amount, privKey) {
         return new Promise((resolve, reject) => {
             //find locker, pubkeys and ids
             let locker = findLocker(coborrower_pubKey, lender_pubKey),
@@ -1563,7 +1720,7 @@
                     if (tx.ins.length != collateral_utxos.length)
                         return reject("Transaction hex doesnot contain full collateral as input")
                     //check output
-                    let return_amount = total_collateral_value - due_amount;
+                    let return_amount = total_collateral_value - liquidate_amount;
                     if (return_amount > 0) {
                         let return_outpts_amount = tx.outs.filter(o => spendScriptToAddress(o.script) == coborrower_btcID).reduce((a, o) => a += o.value, 0)
                         return_outpts_amount = btcOperator.util.Sat_to_BTC(return_outpts_amount);
@@ -1593,11 +1750,28 @@
         return address;
     }
 
+    function checkIfLoanClosedFailed(loan_id, borrower, lender) {
+        return new Promise((resolve, reject) => {
+            //check if loan is closed
+            checkIfLoanClosed(loan_id, borrower, lender).then(result => {
+                if (result) //loan closed
+                    return resolve(result);
+                //check if loan has failed
+                checkIfLoanFailed(loan_id, borrower).then(result => {
+                    if (result) //loan failed
+                        return resolve(result);
+                    else
+                        resolve(false); //loan is active (ie, not closed, not failed)
+                }).catch(error => reject(error))
+            }).catch(error => reject(error))
+        })
+    }
+
     function checkIfLoanClosed(loan_id, borrower, lender) {
         return new Promise((resolve, reject) => {
             var query_options = { sentOnly: true, tx: true, receivers: [floCrypto.toFloID(lender)] };
             let filter = d => {
-                if (!d.startsWith(LOAN_CLOSING_IDENTIFIER))
+                if (!d.includes(LOAN_CLOSING_IDENTIFIER))
                     return false;
                 let closing_details = parseLoanCloseData(d);
                 return closing_details.loan_id === loan_id;
@@ -1606,8 +1780,31 @@
                 if (result.item) {
                     let close_id = result.item.txid
                     getLoanClosing(loan_id, close_id).then(loan_details => {
-                        //loan already close, reject this request for preliquidate
-                        resolve(loan_details)
+                        //loan already closed
+                        resolve(close_id)
+                    }).catch(error => reject(error))
+                }
+                else resolve(false);
+            }).catch(error => reject(error))
+        })
+    }
+
+    function checkIfLoanFailed(loan_id, borrower) {
+        return new Promise((resolve, reject) => {
+            //sender is BANKER for this data
+            var query_options = { sentOnly: true, tx: true, receivers: [floCrypto.toFloID(borrower)] };
+            let filter = d => {
+                if (!d.startsWith(LOAN_FAILURE_IDENTIFIER))
+                    return false;
+                let failure_details = parseLoanFailData(d);
+                return failure_details.loan_id === loan_id;
+            }
+            floBlockchainAPI.getLatestData(BANKER_ID, filter, query_options).then(result => {
+                if (result.item) {
+                    let fail_id = result.item.txid;
+                    getLoanFailure(loan_id, fail_id).then(loan_details => {
+                        //loan already failed
+                        resolve(fail_id)
                     }).catch(error => reject(error))
                 }
                 else resolve(false);
