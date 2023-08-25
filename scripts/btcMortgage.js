@@ -150,6 +150,7 @@
             get: () => APP_NAME + '#' + floCrypto.toFloID(floDapps.user.id)
         }
     })
+    btcMortgage.policies = POLICIES;
 
     //get BTC rates
     const getRate = btcMortgage.getRate = {};
@@ -173,7 +174,6 @@
                 console.log(result);
                 loadOwnedCollateralLocksFromIDB().then(_ => {
                     readPoliciesFromBlockchain().then(policies => {
-                        console.log("Policies", policies);
                         readAllLoans().then(loans => {
                             console.log("Loans", loans);
                             resolve("App initiation successful")
