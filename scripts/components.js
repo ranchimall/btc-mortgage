@@ -7,3 +7,155 @@ const smNotifications = document.createElement("template"); smNotifications.inne
 class Stack { constructor() { this.items = [] } push(t) { this.items.push(t) } pop() { return 0 == this.items.length ? "Underflow" : this.items.pop() } peek() { return this.items[this.items.length - 1] } } const popupStack = new Stack, smPopup = document.createElement("template"); smPopup.innerHTML = ` <style> *{ padding: 0; margin: 0; -webkit-box-sizing: border-box; box-sizing: border-box; } :host{ position: fixed; display: -ms-grid; display: grid; z-index: 10; --width: 100%; --height: auto; --min-width: auto; --min-height: auto; --backdrop-background: rgba(0, 0, 0, 0.6); --border-radius: 0.8rem 0.8rem 0 0; } .popup-container{ display: -ms-grid; display: grid; position: fixed; top: 0; bottom: 0; left: 0; right: 0; place-items: center; z-index: 10; touch-action: none; } :host(.stacked) .popup{ -webkit-transform: scale(0.9) translateY(-2rem) !important; transform: scale(0.9) translateY(-2rem) !important; } .backdrop{ position: absolute; top: 0; bottom: 0; left: 0; right: 0; background: var(--backdrop-background); -webkit-transition: opacity 0.3s; -o-transition: opacity 0.3s; transition: opacity 0.3s; } .popup{ display: -webkit-box; display: -ms-flexbox; display: flex; -webkit-box-orient: vertical; -webkit-box-direction: normal; flex-direction: column; position: relative; -ms-flex-item-align: end; align-self: flex-end; -webkit-box-align: start; -ms-flex-align: start; align-items: flex-start; width: var(--width); min-width: var(--min-width); height: var(--height); min-height: var(--min-height); max-height: 90vh; border-radius: var(--border-radius); background: rgba(var(--background-color, (255,255,255)), 1); -webkit-box-shadow: 0 -1rem 2rem #00000020; box-shadow: 0 -1rem 2rem #00000020; } .container-header{ display: -webkit-box; display: flex; width: 100%; touch-action: none; -webkit-box-align: center; -ms-flex-align: center; align-items: center; } .popup-top{ display: -webkit-box; display: flex; width: 100%; } .popup-body{ display: -webkit-box; display: flex; -webkit-box-orient: vertical; -webkit-box-direction: normal; -ms-flex-direction: column; flex-direction: column; -webkit-box-flex: 1; -ms-flex: 1; flex: 1; width: 100%; padding: var(--body-padding, 1.5rem); overflow-y: auto; } .hide{ display:none; } @media screen and (min-width: 640px){ :host{ --border-radius: 0.5rem; } .popup{ -ms-flex-item-align: center; -ms-grid-row-align: center; align-self: center; border-radius: var(--border-radius); height: var(--height); -webkit-box-shadow: 0 3rem 2rem -0.5rem #00000040; box-shadow: 0 3rem 2rem -0.5rem #00000040; } } @media screen and (max-width: 640px){ .popup-top{ -webkit-box-orient: vertical; -webkit-box-direction: normal; flex-direction: column; -webkit-box-align: center; align-items: center; } .handle{ height: 0.3rem; width: 2rem; background: rgba(var(--text-color, (17,17,17)), .4); border-radius: 1rem; margin: 0.5rem 0; } } @media (any-hover: hover){ ::-webkit-scrollbar{ width: 0.5rem; } ::-webkit-scrollbar-thumb{ background: rgba(var(--text-color, (17,17,17)), 0.3); border-radius: 1rem; &:hover{ background: rgba(var(--text-color, (17,17,17))), 0.5); } } } </style> <div class="popup-container hide" role="dialog"> <div part="backdrop" class="backdrop"></div> <div part="popup" class="popup"> <div part="popup-header" class="popup-top"> <div class="handle"></div> <slot name="header"></slot> </div> <div part="popup-body" class="popup-body"> <slot></slot> </div> </div> </div> `, customElements.define("sm-popup", class extends HTMLElement { constructor() { super(), this.attachShadow({ mode: "open" }).append(smPopup.content.cloneNode(!0)), this.allowClosing = !1, this.isOpen = !1, this.offset = 0, this.touchStartY = 0, this.touchEndY = 0, this.touchStartTime = 0, this.touchEndTime = 0, this.touchEndAnimation = void 0, this.focusable, this.autoFocus, this.mutationObserver, this.popupContainer = this.shadowRoot.querySelector(".popup-container"), this.backdrop = this.shadowRoot.querySelector(".backdrop"), this.dialogBox = this.shadowRoot.querySelector(".popup"), this.popupBodySlot = this.shadowRoot.querySelector(".popup-body slot"), this.popupHeader = this.shadowRoot.querySelector(".popup-top"), this.resumeScrolling = this.resumeScrolling.bind(this), this.setStateOpen = this.setStateOpen.bind(this), this.show = this.show.bind(this), this.hide = this.hide.bind(this), this.handleTouchStart = this.handleTouchStart.bind(this), this.handleTouchMove = this.handleTouchMove.bind(this), this.handleTouchEnd = this.handleTouchEnd.bind(this), this.detectFocus = this.detectFocus.bind(this), this.handleSoftDismiss = this.handleSoftDismiss.bind(this), this.debounce = this.debounce.bind(this) } static get observedAttributes() { return ["open"] } get open() { return this.isOpen } animateTo(t, e, i) { let s = t.animate(e, { ...i, fill: "both" }); return s.finished.then(() => { s.commitStyles(), s.cancel() }), s } resumeScrolling() { let t = document.body.style.top; window.scrollTo(0, -1 * parseInt(t || "0")), document.body.style.overflow = "", document.body.style.top = "initial" } setStateOpen() { if (!this.isOpen || this.offset) { let t = window.innerWidth > 640 ? "scale(1.1)" : `translateY(${this.offset ? `${this.offset}px` : "100%"})`; this.animateTo(this.dialogBox, [{ opacity: this.offset ? 1 : 0, transform: t }, { opacity: 1, transform: "none" },], { duration: 300, easing: "ease" }) } } show(t = {}) { let { pinned: e = !1, payload: i } = t; if (this.isOpen) return; let s = { duration: 300, easing: "ease" }; return this.payload = i, popupStack.push({ popup: this, permission: e }), popupStack.items.length > 1 && this.animateTo(popupStack.items[popupStack.items.length - 2].popup.shadowRoot.querySelector(".popup"), [{ transform: "none" }, { transform: window.innerWidth > 640 ? "scale(0.95)" : "translateY(-1.5rem)" },], s), this.popupContainer.classList.remove("hide"), this.offset || (this.backdrop.animate([{ opacity: 0 }, { opacity: 1 },], s).onfinish = () => { this.resolveOpen(this.payload) }, this.dispatchEvent(new CustomEvent("popupopened", { bubbles: !0, composed: !0, detail: { payload: this.payload } })), document.body.style.overflow = "hidden", document.body.style.top = `-${window.scrollY}px`), this.setStateOpen(), this.pinned = e, this.isOpen = !0, setTimeout(() => { let t = this.autoFocus || this.focusable?.[0] || this.dialogBox; t && (t.tagName.includes("-") ? t.focusIn() : t.focus()) }, 0), this.hasAttribute("open") || (this.setAttribute("open", ""), this.addEventListener("keydown", this.detectFocus), this.resizeObserver.observe(this), this.mutationObserver.observe(this, { attributes: !0, childList: !0, subtree: !0 }), this.popupHeader.addEventListener("touchstart", this.handleTouchStart, { passive: !0 }), this.backdrop.addEventListener("mousedown", this.handleSoftDismiss)), { opened: new Promise(t => { this.resolveOpen = t }), closed: new Promise(t => { this.resolveClose = t }) } } hide(t = {}) { let { payload: e } = t, i = { duration: 150, easing: "ease" }; this.backdrop.animate([{ opacity: 1 }, { opacity: 0 }], i), this.animateTo(this.dialogBox, [{ opacity: 1, transform: window.innerWidth > 640 ? "none" : `translateY(${this.offset ? `${this.offset}px` : "0"})` }, { opacity: 0, transform: window.innerWidth > 640 ? "scale(1.1)" : "translateY(100%)" },], i).finished.finally(() => { this.popupContainer.classList.add("hide"), this.dialogBox.style = "", this.removeAttribute("open"), this.forms.length && this.forms.forEach(t => t.reset()), this.dispatchEvent(new CustomEvent("popupclosed", { bubbles: !0, composed: !0, detail: { payload: e || this.payload } })), this.resolveClose(e || this.payload), this.isOpen = !1 }), popupStack.pop(), popupStack.items.length ? this.animateTo(popupStack.items[popupStack.items.length - 1].popup.shadowRoot.querySelector(".popup"), [{ transform: window.innerWidth > 640 ? "scale(0.95)" : "translateY(-1.5rem)" }, { transform: "none" },], i) : this.resumeScrolling(), this.resizeObserver.disconnect(), this.mutationObserver.disconnect(), this.removeEventListener("keydown", this.detectFocus), this.popupHeader.removeEventListener("touchstart", this.handleTouchStart, { passive: !0 }), this.backdrop.removeEventListener("mousedown", this.handleSoftDismiss) } handleTouchStart(t) { this.offset = 0, this.popupHeader.addEventListener("touchmove", this.handleTouchMove, { passive: !0 }), this.popupHeader.addEventListener("touchend", this.handleTouchEnd, { passive: !0 }), this.touchStartY = t.changedTouches[0].clientY, this.touchStartTime = t.timeStamp } handleTouchMove(t) { this.touchStartY < t.changedTouches[0].clientY && (this.offset = t.changedTouches[0].clientY - this.touchStartY, this.touchEndAnimation = window.requestAnimationFrame(() => { this.dialogBox.style.transform = `translateY(${this.offset}px)` })) } handleTouchEnd(t) { if (this.touchEndTime = t.timeStamp, cancelAnimationFrame(this.touchEndAnimation), this.touchEndY = t.changedTouches[0].clientY, this.threshold = .3 * this.dialogBox.getBoundingClientRect().height, this.touchEndTime - this.touchStartTime > 200) { if (this.touchEndY - this.touchStartY > this.threshold) { if (this.pinned) { this.setStateOpen(); return } this.hide() } else this.setStateOpen() } else if (this.touchEndY > this.touchStartY) { if (this.pinned) { this.setStateOpen(); return } this.hide() } this.popupHeader.removeEventListener("touchmove", this.handleTouchMove, { passive: !0 }), this.popupHeader.removeEventListener("touchend", this.handleTouchEnd, { passive: !0 }) } detectFocus(t) { if ("Tab" === t.key && this.focusable.length) { if (!this.firstFocusable) { for (let e = 0; e < this.focusable.length; e++)if (!this.focusable[e].disabled) { this.firstFocusable = this.focusable[e]; break } } if (!this.lastFocusable) { for (let i = this.focusable.length - 1; i >= 0; i--)if (!this.focusable[i].disabled) { this.lastFocusable = this.focusable[i]; break } } t.shiftKey && document.activeElement === this.firstFocusable ? (t.preventDefault(), this.lastFocusable.tagName.includes("SM-") ? this.lastFocusable.focusIn() : this.lastFocusable.focus()) : t.shiftKey || document.activeElement !== this.lastFocusable || (t.preventDefault(), this.firstFocusable.tagName.includes("SM-") ? this.firstFocusable.focusIn() : this.firstFocusable.focus()) } } updateFocusableList() { this.focusable = this.querySelectorAll('sm-button:not([disabled]), button:not([disabled]), [href], sm-input, input:not([readonly]), sm-select, select, sm-checkbox, sm-textarea, textarea, [tabindex]:not([tabindex="-1"])'), this.autoFocus = this.querySelector("[autofocus]"), this.firstFocusable = null, this.lastFocusable = null } handleSoftDismiss() { this.pinned ? this.dialogBox.animate([{ transform: "translateX(-1rem)" }, { transform: "translateX(1rem)" }, { transform: "translateX(-0.5rem)" }, { transform: "translateX(0.5rem)" }, { transform: "translateX(0)" },], { duration: 300, easing: "ease" }) : this.hide() } debounce(t, e) { let i = null; return (...s) => { window.clearTimeout(i), i = window.setTimeout(() => { t.apply(null, s) }, e) } } connectedCallback() { this.popupBodySlot.addEventListener("slotchange", this.debounce(() => { this.forms = this.querySelectorAll("sm-form"), this.updateFocusableList() }, 0)), this.resizeObserver = new ResizeObserver(t => { t.forEach(t => { if (t.contentBoxSize) { let e = Array.isArray(t.contentBoxSize) ? t.contentBoxSize[0] : t.contentBoxSize; this.threshold = .3 * e.blockSize.height } else this.threshold = .3 * t.contentRect.height }) }), this.mutationObserver = new MutationObserver(t => { this.updateFocusableList() }) } disconnectedCallback() { this.resizeObserver.disconnect(), this.mutationObserver.disconnect(), this.removeEventListener("keydown", this.detectFocus), this.popupHeader.removeEventListener("touchstart", this.handleTouchStart, { passive: !0 }), this.backdrop.removeEventListener("mousedown", this.handleSoftDismiss) } attributeChangedCallback(t) { "open" === t && this.hasAttribute("open") && this.show() } });
 const spinner = document.createElement("template"); spinner.innerHTML = '<style> *{ padding: 0; margin: 0; -webkit-box-sizing: border-box; box-sizing: border-box;}.loader { display: flex; height: var(--size, 1.5rem); width: var(--size, 1.5rem); stroke-width: 8; overflow: visible; stroke: var(--accent-color, teal); fill: none; stroke-dashoffset: 180; stroke-dasharray: 180; animation: load 2s infinite, spin 1s linear infinite;}@keyframes load { 50% { stroke-dashoffset: 0; } 100%{ stroke-dashoffset: -180; }}@keyframes spin { 100% { transform: rotate(360deg); }}</style><svg viewBox="0 0 64 64" class="loader"><circle cx="32" cy="32" r="32" /></svg>'; class SpinnerLoader extends HTMLElement { constructor() { super(), this.attachShadow({ mode: "open" }).append(spinner.content.cloneNode(!0)) } } window.customElements.define("sm-spinner", SpinnerLoader);
 const themeToggle = document.createElement("template"); themeToggle.innerHTML = ' <style> *{ padding: 0; margin: 0; box-sizing: border-box; } :host{ cursor: pointer; --height: 2.5rem; --width: 2.5rem; } .theme-toggle { display: flex; position: relative; width: 1.2rem; height: 1.2rem; cursor: pointer; -webkit-tap-highlight-color: transparent; } .theme-toggle::after{ content: \'\'; position: absolute; height: var(--height); width: var(--width); top: 50%; left: 50%; opacity: 0; border-radius: 50%; pointer-events: none; transition: transform 0.3s, opacity 0.3s; transform: translate(-50%, -50%) scale(1.2); background-color: rgba(var(--text-color,inherit), 0.12); } :host(:focus-within) .theme-toggle{ outline: none; } :host(:focus-within) .theme-toggle::after{ opacity: 1; transform: translate(-50%, -50%) scale(1); } .icon { position: absolute; height: 100%; width: 100%; fill: rgba(var(--text-color,inherit), 1); transition: transform 0.3s, opacity 0.1s; }  .theme-switcher__checkbox { display: none; } :host([checked]) .moon-icon { transform: translateY(50%); opacity: 0; } :host(:not([checked])) .sun-icon { transform: translateY(50%); opacity: 0; } </style> <label class="theme-toggle" title="Change theme" tabindex="0"> <slot name="light-mode-icon"> <svg xmlns="http://www.w3.org/2000/svg" class="icon moon-icon" enable-background="new 0 0 24 24" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><rect fill="none" height="24" width="24"/><path d="M9.37,5.51C9.19,6.15,9.1,6.82,9.1,7.5c0,4.08,3.32,7.4,7.4,7.4c0.68,0,1.35-0.09,1.99-0.27C17.45,17.19,14.93,19,12,19 c-3.86,0-7-3.14-7-7C5,9.07,6.81,6.55,9.37,5.51z M12,3c-4.97,0-9,4.03-9,9s4.03,9,9,9s9-4.03,9-9c0-0.46-0.04-0.92-0.1-1.36 c-0.98,1.37-2.58,2.26-4.4,2.26c-2.98,0-5.4-2.42-5.4-5.4c0-1.81,0.89-3.42,2.26-4.4C12.92,3.04,12.46,3,12,3L12,3z"/></svg> </slot> <slot name="dark-mode-icon"> <svg xmlns="http://www.w3.org/2000/svg" class="icon sun-icon" enable-background="new 0 0 24 24" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><rect fill="none" height="24" width="24"/><path d="M12,9c1.65,0,3,1.35,3,3s-1.35,3-3,3s-3-1.35-3-3S10.35,9,12,9 M12,7c-2.76,0-5,2.24-5,5s2.24,5,5,5s5-2.24,5-5 S14.76,7,12,7L12,7z M2,13l2,0c0.55,0,1-0.45,1-1s-0.45-1-1-1l-2,0c-0.55,0-1,0.45-1,1S1.45,13,2,13z M20,13l2,0c0.55,0,1-0.45,1-1 s-0.45-1-1-1l-2,0c-0.55,0-1,0.45-1,1S19.45,13,20,13z M11,2v2c0,0.55,0.45,1,1,1s1-0.45,1-1V2c0-0.55-0.45-1-1-1S11,1.45,11,2z M11,20v2c0,0.55,0.45,1,1,1s1-0.45,1-1v-2c0-0.55-0.45-1-1-1C11.45,19,11,19.45,11,20z M5.99,4.58c-0.39-0.39-1.03-0.39-1.41,0 c-0.39,0.39-0.39,1.03,0,1.41l1.06,1.06c0.39,0.39,1.03,0.39,1.41,0s0.39-1.03,0-1.41L5.99,4.58z M18.36,16.95 c-0.39-0.39-1.03-0.39-1.41,0c-0.39,0.39-0.39,1.03,0,1.41l1.06,1.06c0.39,0.39,1.03,0.39,1.41,0c0.39-0.39,0.39-1.03,0-1.41 L18.36,16.95z M19.42,5.99c0.39-0.39,0.39-1.03,0-1.41c-0.39-0.39-1.03-0.39-1.41,0l-1.06,1.06c-0.39,0.39-0.39,1.03,0,1.41 s1.03,0.39,1.41,0L19.42,5.99z M7.05,18.36c0.39-0.39,0.39-1.03,0-1.41c-0.39-0.39-1.03-0.39-1.41,0l-1.06,1.06 c-0.39,0.39-0.39,1.03,0,1.41s1.03,0.39,1.41,0L7.05,18.36z"/></svg> </slot> </label>'; class ThemeToggle extends HTMLElement { constructor() { super(), this.attachShadow({ mode: "open" }).append(themeToggle.content.cloneNode(!0)), this.isChecked = !1, this.hasTheme = "light", this.toggleState = this.toggleState.bind(this), this.fireEvent = this.fireEvent.bind(this), this.handleThemeChange = this.handleThemeChange.bind(this) } static get observedAttributes() { return ["checked"] } daylight() { this.hasTheme = "light", document.body.dataset.theme = "light", this.setAttribute("aria-checked", "false") } nightlight() { this.hasTheme = "dark", document.body.dataset.theme = "dark", this.setAttribute("aria-checked", "true") } toggleState() { this.toggleAttribute("checked"), this.fireEvent() } handleKeyDown(e) { " " === e.key && this.toggleState() } handleThemeChange(e) { e.detail.theme !== this.hasTheme && ("dark" === e.detail.theme ? this.setAttribute("checked", "") : this.removeAttribute("checked")) } fireEvent() { this.dispatchEvent(new CustomEvent("themechange", { bubbles: !0, composed: !0, detail: { theme: this.hasTheme } })) } connectedCallback() { this.setAttribute("role", "switch"), this.setAttribute("aria-label", "theme toggle"), "dark" === localStorage.getItem(`${window.location.hostname}-theme`) ? (this.nightlight(), this.setAttribute("checked", "")) : "light" === localStorage.getItem(`${window.location.hostname}-theme`) ? (this.daylight(), this.removeAttribute("checked")) : window.matchMedia("(prefers-color-scheme: dark)").matches ? (this.nightlight(), this.setAttribute("checked", "")) : (this.daylight(), this.removeAttribute("checked")), this.addEventListener("click", this.toggleState), this.addEventListener("keydown", this.handleKeyDown), document.addEventListener("themechange", this.handleThemeChange) } disconnectedCallback() { this.removeEventListener("click", this.toggleState), this.removeEventListener("keydown", this.handleKeyDown), document.removeEventListener("themechange", this.handleThemeChange) } attributeChangedCallback(e, t, n) { "checked" === e && (this.hasAttribute("checked") ? (this.nightlight(), localStorage.setItem(`${window.location.hostname}-theme`, "dark")) : (this.daylight(), localStorage.setItem(`${window.location.hostname}-theme`, "light"))) } } window.customElements.define("theme-toggle", ThemeToggle);
+
+const adBlockerWarning = document.createElement('template')
+adBlockerWarning.innerHTML = `
+            <style>
+                * {
+                    padding: 0;
+                    margin: 0;
+                    box-sizing: border-box;
+                }
+                :host{
+                    display: flex;
+                    flex-direction: column;
+                    align-content: center;
+                    justify-content: center;
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    z-index: 50;
+                    background-color: rgba(var(--foreground-color), 1);
+                }
+                #adblocker_warning {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    text-align: center;
+                    gap: 1rem;
+                    padding: 1.5rem;
+                }
+                h1{
+                    font-size: 2rem;
+                    margin-top: 1rem;
+                }
+                p{
+                    font-size: 0.9rem;
+                    max-width: 65ch;
+                    line-height: 1.7;
+                    color: rgba(var(--text-color), 0.9);
+                }
+                .icon {
+                    height: 4rem;
+                    width: 4rem;
+                    fill: #ffc107;
+                }
+            </style>
+            <article id="adblocker_warning"></article>
+        `;
+window.customElements.define('adblocker-warning', class extends HTMLElement {
+    constructor() {
+        super();
+        this.attachShadow({ mode: 'open' });
+        this.shadowRoot.appendChild(adBlockerWarning.content.cloneNode(true));
+    }
+    connectedCallback() {
+        const isBrave = navigator.brave !== undefined
+        this.shadowRoot.querySelector('#adblocker_warning').innerHTML = `
+                    <svg class="icon" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><path d="M4.47 21h15.06c1.54 0 2.5-1.67 1.73-3L13.73 4.99c-.77-1.33-2.69-1.33-3.46 0L2.74 18c-.77 1.33.19 3 1.73 3zM12 14c-.55 0-1-.45-1-1v-2c0-.55.45-1 1-1s1 .45 1 1v2c0 .55-.45 1-1 1zm1 4h-2v-2h2v2z"/></svg>
+                    <h1>Ad-Blocker Detected!</h1>
+                    <p>
+                        Please disable your ad-blocker for optimal experience. Our app doesn't show ads or track activity.   
+                    </p>
+                    ${isBrave ? `<strong>If you have enabled Brave shield then disable it also.</strong>` : ''}
+                `;
+    }
+});
+
+const IDBsupport = document.createElement('template')
+IDBsupport.innerHTML = `
+            <style>
+                * {
+                    padding: 0;
+                    margin: 0;
+                    box-sizing: border-box;
+                }
+                :host{
+                    display: flex;
+                    flex-direction: column;
+                    align-content: center;
+                    justify-content: center;
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    z-index: 50;
+                    background-color: rgba(var(--foreground-color), 1);
+                }
+                #idb_support {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    text-align: center;
+                    gap: 1rem;
+                    padding: 1.5rem;
+                }
+                h1{
+                    font-size: 2rem;
+                    margin-top: 1rem;
+                    margin-bottom: 2rem;
+                }
+                p{
+                    font-size: 0.9rem;
+                    max-width: 65ch;
+                    line-height: 1.7;
+                    color: rgba(var(--text-color), 0.9);
+                }
+                .icon {
+                    height: 4rem;
+                    width: 4rem;
+                    fill: #ffc107;
+                }
+            </style>
+            <article id="idb_support">
+                <svg class="icon" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><path d="M4.47 21h15.06c1.54 0 2.5-1.67 1.73-3L13.73 4.99c-.77-1.33-2.69-1.33-3.46 0L2.74 18c-.77 1.33.19 3 1.73 3zM12 14c-.55 0-1-.45-1-1v-2c0-.55.45-1 1-1s1 .45 1 1v2c0 .55-.45 1-1 1zm1 4h-2v-2h2v2z"/></svg>
+                <h1>Your browser doesn't support IndexedDB</h1>
+                <p>
+                    This app uses IndexedDB to store your data locally. Without IndexedDB support this app won't work.
+                </p>
+                <p> 
+                    Please use browsers like Chrome, Firefox, Opera, Edge, Safari, Brave, etc.
+                </p>
+                <strong> If you are using Firefox TOR then consider using brave TOR instead. </strong>
+            </article>
+        `;
+window.customElements.define('idb-support', class extends HTMLElement {
+    constructor() {
+        super();
+        this.attachShadow({ mode: 'open' });
+        this.shadowRoot.appendChild(IDBsupport.content.cloneNode(true));
+    }
+
+    connectedCallback() {
+        const thisComponent = this;
+        if ('indexedDB' in window) {
+            const request = window.indexedDB.open('testDB', 1);
+            request.onerror = function (event) {
+                // IndexedDB is not allowed or an error occurred
+                console.log('IndexedDB is not allowed or encountered an error.');
+            };
+            request.onsuccess = function (event) {
+                // IndexedDB is allowed and successfully opened the database
+                thisComponent.remove();
+            };
+        } else {
+            // IndexedDB is not supported in this browser
+            console.log('IndexedDB is not supported.');
+        }
+    }
+})

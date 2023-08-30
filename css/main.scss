@@ -208,6 +208,25 @@ sm-chip {
   --padding: 0.5rem 0.8rem;
   --background: rgba(var(--text-color), 0.06);
   user-select: none;
+  &[selected="true"] {
+    .badge {
+      background-color: rgba(var(--foreground-color), 1);
+      color: var(--accent-color);
+    }
+  }
+  .badge {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 1.2rem;
+    border-radius: 2rem;
+    margin-left: 0.5rem;
+    font-weight: 700;
+    aspect-ratio: 1/1;
+    background-color: var(--accent-color);
+    color: rgba(var(--background-color), 1);
+  }
 }
 sm-select {
   &::part(options) {
@@ -537,56 +556,10 @@ h3 {
   display: block;
   height: 100%;
   width: 100%;
-  &.has-navbar {
-    display: grid;
-    grid-template-rows: auto 1fr auto;
-    grid-template-areas: "header" "main" "navbar";
-  }
 }
 #main_header {
   grid-area: header;
   background-color: rgba(var(--foreground-color), 1);
-}
-#main_navbar {
-  display: flex;
-  grid-area: navbar;
-  background-color: rgba(var(--foreground-color), 1);
-  ul {
-    display: flex;
-    flex: 1;
-    justify-content: center;
-    align-items: center;
-  }
-  .nav-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 1rem;
-    transition: background-color 0.3s;
-    color: rgba(var(--text-color), 0.7);
-    font-weight: 500;
-    font-size: 0.9rem;
-    .icon {
-      fill: rgba(var(--text-color), 0.7);
-    }
-    &--active {
-      position: relative;
-      color: var(--accent-color);
-      background-color: rgba(62, 111, 255, 0.1);
-      &::before {
-        content: "";
-        position: absolute;
-        top: 0;
-        left: 0;
-        height: 100%;
-        width: 0.2rem;
-        background-color: var(--accent-color);
-      }
-      .icon {
-        fill: var(--accent-color);
-      }
-    }
-  }
 }
 #sub_page_container {
   grid-area: main;
@@ -684,10 +657,18 @@ h3 {
 }
 #main_page {
   display: grid;
+  min-width: 0;
+  width: min(64rem, 100%);
+  margin: auto;
   grid-template-columns: minmax(0, 1fr);
+}
+#apply_loan {
+  width: min(64rem, 100%);
+  margin: auto;
 }
 #policy_list {
   display: grid;
+  width: 100%;
   gap: 0.5rem;
   grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
 }
@@ -726,6 +707,36 @@ h3 {
     }
   }
 }
+#collateral_requests_list {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+}
+.collateral-request {
+  display: flex;
+  gap: 1.5rem;
+  flex-direction: column;
+  background-color: rgba(var(--foreground-color), 1);
+  padding: 1rem;
+  b {
+    color: rgba(var(--text-color), 0.9);
+  }
+}
+#loan_requests_list {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+}
+.loan-request {
+  display: grid;
+  gap: 1.5rem;
+  background-color: rgba(var(--foreground-color), 1);
+  padding: 1rem;
+  b {
+    font-weight: 500;
+    color: rgba(var(--text-color), 0.9);
+  }
+}
 @media screen and (max-width: 40rem) {
   theme-toggle {
     order: 2;
@@ -748,26 +759,6 @@ h3 {
   }
   .popup__header {
     padding: 1.5rem 1.5rem 0 0.75rem;
-  }
-  #app_body {
-    &.has-navbar {
-      grid-template-rows: auto 1fr;
-      grid-template-columns: auto 1fr;
-      grid-template-areas: "header header" "navbar main";
-    }
-  }
-  #main_navbar {
-    ul {
-      flex-direction: column;
-      justify-content: flex-start;
-    }
-    .nav-item {
-      padding: 0.8rem 1rem;
-      min-width: 10rem;
-    }
-  }
-  #main_page {
-    grid-template-columns: 1fr 24rem;
   }
   #request_loan_popup {
     --width: 32rem;

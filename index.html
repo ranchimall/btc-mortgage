@@ -14,6 +14,7 @@
 </head>
 
 <body onload="onLoadStartUp()" class="hidden">
+    <idb-support></idb-support>
     <sm-notifications id="notification_drawer"></sm-notifications>
     <sm-popup id="confirmation_popup">
         <h4 id="confirm_title"></h4>
@@ -396,15 +397,14 @@
         }
     </script>
     <script>
-        let selectedCurrency = 'btc'
-        function formatAmount(amount = 0) {
+        function formatAmount(amount = 0, currency = 'btc') {
             // check if amount is a string and convert it to a number
             if (typeof amount === 'string') {
                 amount = parseFloat(amount)
             }
             if (!amount)
                 return '0';
-            return amount.toLocaleString(selectedCurrency === 'inr' ? `en-IN` : 'en-US', { style: 'currency', currency: selectedCurrency, maximumFractionDigits: selectedCurrency === 'btc' ? 8 : 2 })
+            return amount.toLocaleString(currency === 'inr' ? `en-IN` : 'en-US', { style: 'currency', currency, maximumFractionDigits: currency === 'btc' ? 8 : 2 })
         }
         const render = {
             policy(id, details = {}) {
@@ -428,10 +428,10 @@
                             <sm-form id="request_loan_form">
                                 <sm-input id="loan_amount" type="number" placeholder="Loan amount" min="0.00001" step="0.00000001" error-text="Amount must be greater than 0.00001BTC" oninput=${(e) => { setLoanAmount(e.target.value) }} animate required>
                                     <div class="currency-symbol flex" slot="icon"> 
-                                        <svg class="icon" xmlns="http://www.w3.org/2000/svg" enable-background="new 0 0 24 24" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"> <g> <rect fill="none" height="24" width="24"></rect> </g> <g> <path d="M17.06,11.57C17.65,10.88,18,9.98,18,9c0-1.86-1.27-3.43-3-3.87L15,3h-2v2h-2V3H9v2H6v2h2v10H6v2h3v2h2v-2h2v2h2v-2 c2.21,0,4-1.79,4-4C19,13.55,18.22,12.27,17.06,11.57z M10,7h4c1.1,0,2,0.9,2,2s-0.9,2-2,2h-4V7z M15,17h-5v-4h5c1.1,0,2,0.9,2,2 S16.1,17,15,17z"> </path> </g> </svg>
+                                        <svg class="icon" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><path d="M0 0h24v24H0V0z" fill="none"></path><path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"></path></svg>
                                     </div>    
                                 </sm-input>
-                                <p>Collateral amount: <b>${formatAmount(loanAmount * loan_collateral_ratio)}</b></p>
+                                <p>Collateral amount: <b>${formatAmount((loanAmount / floGlobals.btcRate) * loan_collateral_ratio)}</b></p>
                                 <div class="grid gap-1">
                                     <label class="interact">
                                         <input type="radio" name="collateral_type" value="self" checked=${selfCollateral} onchange=${() => setSelfCollateral(true)} required>
@@ -473,11 +473,11 @@
                         <div class="grid gap-1-5">
                             <div class="grid gap-0-5">
                                 <h5>Loan amount</h5>
-                                <p>${formatAmount(loanAmount)}</p>
+                                <p>${formatAmount(loanAmount, 'usd')}</p>
                             </div>
                             <div class="grid gap-0-5">
                                 <h5>Collateral amount</h5>
-                                <p>${formatAmount(loanAmount * loan_collateral_ratio)}</p>
+                                <p>${formatAmount((loanAmount / floGlobals.btcRate) * loan_collateral_ratio)}</p>
                             </div>
                             <div class="grid gap-0-5">
                                 <h5>Collateral provider</h5>
@@ -528,10 +528,134 @@
                         </div>
                         <div class="grid gap-0-3">
                             <h5>Pre-liquidation threshold</h5>
-                            <p>${pre_liquidation_threshold ? `${pre_liquidation_threshold}%` : 'None'}</p>
+                            <p>${pre_liquidation_threshold ? `${pre_liquidation_threshold * 100}%` : 'None'}</p>
                         </div>
                         <button class="button button--colored" onclick=${initLoanRequestProcess}>Request loan</button>
                     </li>    
+                `
+            },
+            collateralRequest(requestId, details = {}) {
+                const { message: { borrower, coborrower, loan_amount, policy_id }, vectorClock } = details;
+                const collateralAmount = btcMortgage.util.toFixedDecimal(btcMortgage.policies[policy_id].loan_collateral_ratio * (loan_amount / floGlobals.btcRate))
+                async function approveCollateralRequest(e) {
+                    const confirmation = await getConfirmation('Send collateral?', { message: `You are about to send ${formatAmount(collateralAmount)} collateral to the borrower. Continue?`, confirmText: 'Send', cancelText: 'Cancel', danger: true })
+                    if (!confirmation)
+                        return;
+                    e.target.disabled = true;
+                    e.target.textContent = 'Sending...'
+                    try {
+                        await btcMortgage.requestLoan(vectorClock, borrower)
+                        await floCloudAPI.noteApplicationData(vectorClock, 'approved')
+                        floGlobals.myInbox[vectorClock].note = 'approved';
+                        notify('Collateral sent successfully', 'success')
+                        router.routeTo(location.hash)
+                    } catch (err) {
+                        notify(err, 'error')
+                        e.target.textContent = 'Approve'
+                    } finally {
+                        e.target.disabled = false;
+                    }
+                }
+                async function rejectCollateralRequest(e) {
+                    const confirmation = await getConfirmation('Reject collateral request?', { message: `You are about to reject the collateral request. Continue?`, confirmText: 'Reject', cancelText: 'Cancel', danger: true })
+                    if (!confirmation)
+                        return;
+                    e.target.disabled = true;
+                    e.target.textContent = 'Rejecting...'
+                    try {
+                        console.log(vectorClock)
+                        await floCloudAPI.noteApplicationData(vectorClock, 'rejected')
+                        floGlobals.myInbox[vectorClock].note = 'rejected';
+                    } catch (err) {
+                        notify(err, 'error')
+                        e.target.textContent = 'Reject'
+                    } finally {
+                        e.target.disabled = false;
+                    }
+                }
+
+                return html`
+                    <li class="collateral-request">
+                        <fieldset class="grid gap-1">
+                            <legend>Borrower</legend>
+                                <div class="grid gap-0-3">
+                                    <p>BTC address</p>
+                                    <sm-copy value=${getBtcAddress(borrower)}>
+                                        <b>${getBtcAddress(borrower)}</b>
+                                    </sm-copy>
+                                </div>
+                                <div class="grid gap-0-3">
+                                    <p>FLO address</p>
+                                    <sm-copy value=${getFloAddress(borrower)}>
+                                        <b>${getFloAddress(borrower)}</b>
+                                    </sm-copy>
+                                </div>
+                        </fieldset>
+                        <div class="grid gap-0-3">
+                            <p>Amount</p>
+                            <b style="font-size: 1.2rem;">${formatAmount(collateralAmount)}</b>
+                        </div>
+                        <div class="flex gap-0-5 align-center margin-left-auto">
+                            <button class="button button--colored" onclick=${rejectCollateralRequest}>Reject</button>
+                            <button class="button button--primary" onclick=${approveCollateralRequest}>Approve</button>
+                        </div>
+                    </li>
+                `
+            },
+            loanRequest(requestId, details) {
+                const { message: { borrower, coborrower, collateral: { btc_id, quantity, rate }, loan_amount, loan_collateral_req_id, policy_id }, vectorClock } = details;
+                const { duration, interest } = btcMortgage.policies[policy_id];
+                async function acceptLoanProposal() {
+                    const confirmation = await getConfirmation('Accept loan proposal?', { message: `You are about to accept the loan proposal. Continue?`, confirmText: 'Accept', cancelText: 'Cancel', danger: true })
+                    if (!confirmation)
+                        return;
+                    btcMortgage.respondLoan(loan_collateral_req_id, borrower, coborrower).then(() => {
+                        notify('Loan proposal accepted', 'success')
+                        router.routeTo(location.hash)
+                    }).catch(err => {
+                        console.error(err)
+                        notify('There was error accepting loan proposal. please try again after some time.', 'error')
+                    })
+                }
+                return html`
+                    <li class="loan-request">
+                        <div class="grid gap-1-5 flex-1 w-100">
+                            <div class="grid gap-0-3">
+                                <p>Borrower</p>
+                                <sm-copy value=${getBtcAddress(borrower)}>
+                                    <b>${getBtcAddress(borrower)}</b>
+                                </sm-copy>
+                            </div>
+                            ${floCrypto.isSameAddr(borrower, coborrower) ? html`
+                                <div class="grid gap-0-3">
+                                    <p>Collateral provider</p>
+                                    <sm-copy value=${getBtcAddress(coborrower)}>
+                                        <b>${getBtcAddress(coborrower)}</b>
+                                    </sm-copy>
+                                </div>
+                            `: ''}
+                        </div>
+                        <div class="flex flex-wrap align-items-start gap-1-5">
+                            <div class="grid gap-0-3">
+                                <p>Loan amount</p>
+                                <b>${formatAmount(loan_amount, 'usd')}</b>
+                            </div>
+                            <div class="grid gap-0-3">
+                                <p>Collateral amount</p>
+                                <b>${formatAmount(quantity)}</b>
+                            </div>
+                            <div class="grid gap-0-3">
+                                <p>Duration</p>
+                                <b>${duration}</b>
+                            </div>
+                            <div class="grid gap-0-3">
+                                <p>Interest</p>
+                                <b>${interest * 100}% p.a</b>
+                            </div>
+                        </div>
+                        <div class="flex gap-0-5 align-center margin-left-auto">
+                            <button class="button button--primary" onclick=${acceptLoanProposal}>Accept loan proposal</button>
+                        </div>
                 `
             }
         }
@@ -543,9 +667,7 @@
                     history.scrollRestoration = "manual";
                 }
                 window.scrollTo(0, 0);
-                const isPartOfNav = ['home', 'policies', 'profile'].includes(page)
-                if (floGlobals.myFloID && !getRef('main_header') && isPartOfNav) {
-                    getRef('app_body').classList.add('has-navbar')
+                if (floGlobals.myFloID && !getRef('main_header')) {
                     renderElem(getRef('app_body'), html`
                         <header id="main_header">
                             <div class="app-brand margin-right-auto hide-on-small">
@@ -563,18 +685,6 @@
                                 <div class="overflow-ellipsis">${floGlobals.myBtcID}</div>    
                             </button>
                         </header>
-                        <nav id="main_navbar">
-                            <ul>
-                                <li>
-                                    <a href="#/home" class="nav-item interact nav-item--active">
-                                        <svg class="icon" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M12 5.69l5 4.5V18h-2v-6H9v6H7v-7.81l5-4.5M12 3L2 12h3v8h6v-6h2v6h6v-8h3L12 3z"/></svg>
-                                        <span>
-                                            Home
-                                        </span>
-                                    </a>
-                                </li>
-                            </ul>
-                        </nav>
                         <div id="sub_page_container"></div>
                     `)
                     if (userAddressTimeInterval) clearInterval(userAddressTimeInterval);
@@ -594,8 +704,6 @@
                         }
                     }, 1000 * 60);
                 }
-                if (!isPartOfNav)
-                    getRef('app_body').classList.remove('has-navbar')
             },
             routingEnd() {
                 document.querySelectorAll(".my-flo-address").forEach(elem => {
@@ -699,6 +807,7 @@
         const btcAddresses = {}
         const floAddresses = {}
         function getBtcAddress(floAddress) {
+            if (btcOperator.validateAddress(floAddress)) return floAddress
             if (!btcAddresses[floAddress])
                 btcAddresses[floAddress] = btcOperator.convert.legacy2bech(floAddress)
             return btcAddresses[floAddress]
@@ -710,7 +819,7 @@
         }
         let userAddressTimeInterval;
         function renderHome(appState) {
-            const { lastPage, page, params: { filter = 'pending', search } = {} } = appState || {};
+            const { lastPage, page, params: { filter = 'pending', search } = {}, wildcards: [view = 'my-loans'] = [] } = appState || {};
             if (floGlobals.isSubAdmin) {
                 renderElem(getRef('sub_page_container'), html`
                     <section>
@@ -726,32 +835,74 @@
             } else {
                 // user homepage
                 const inbox = Component(() => {
-                    const [view, setView] = useState('my-loans')
+                    let loanRequests = [];
+                    let collateralRequests = [];
+                    const loans = Object.keys(btcMortgage.loans)
+                    for (const key in floGlobals.myInbox) {
+                        if (!floGlobals.myInbox[key].note)
+                            collateralRequests.push(key)
+                    }
+                    for (const key in floGlobals.loanRequests) {
+                        const { message: { borrower, coborrower } } = floGlobals.loanRequests[key]
+                        if (!floCrypto.isSameAddr(borrower, floGlobals.myFloID) && !floCrypto.isSameAddr(coborrower, floGlobals.myFloID))
+                            loanRequests.push(key)
+                    }
                     return html`
                         <section class="grid gap-1">
-                            <sm-chips onchange=${(e) => { setView(e.target.value) }}>
-                                <sm-chip value="my-loans" selected=${view === 'my-loans'}>My Loans</sm-chip>
-                                <sm-chip value="collateral-requests" selected=${view === 'collateral-requests'}>Collateral requests</sm-chip>
-                                <sm-chip value="loan-requests" selected=${view === 'loan-requests'}>Loan requests</sm-chip>
+                            <sm-chips onchange=${(e) => { location.hash = `#/home/${e.target.value}` }}>
+                                <sm-chip value="my-loans" selected=${view === 'my-loans'}>
+                                    My Loans
+                                    ${loans.length ? html`<span class="badge">${loans.length}</span>` : ''}
+                                </sm-chip>
+                                <sm-chip value="collateral-requests" selected=${view === 'collateral-requests'}>
+                                    Collateral requests
+                                    ${collateralRequests.length ? html`<span class="badge">${collateralRequests.length}</span>` : ''}
+                                </sm-chip>
+                                <sm-chip value="loan-requests" selected=${view === 'loan-requests'}>
+                                    Loan requests
+                                    ${loanRequests.length ? html`<span class="badge">${loanRequests.length}</span>` : ''}
+                                </sm-chip>
                             </sm-chips>
                             <div class="grid gap-1">
                                 ${view === 'my-loans' ? html`
-                                    <h4>My Loans</h4>
-                                    <ul class="grid gap-1">
-                                        
-                                    </ul>
+                                ${loans.length ? html`
+                                        <ul class="grid gap-1">
+                                            
+                                        </ul>    
+                                    `: html`
+                                        <div class="grid gap-2 align-center justify-center" style="padding: 2vw 0;">
+                                            <div class="grid gap-0-5">
+                                                <h1>Looking for USD loans?</h1>
+                                                <p>Get a loan against your BTC collateral</p>
+                                            </div>
+                                            <a href="#/apply-loan" class="button button--primary margin-right-auto">Apply for a loan</a>
+                                        </div>
+                                    `}
                                 `: ''}
                                 ${view === 'collateral-requests' ? html`
-                                    <h4>Collateral requests</h4>
-                                    <ul class="grid gap-1">
-                                       
-                                    </ul>
+                                    ${collateralRequests.length ? html`
+                                        <ul id="collateral_requests_list">
+                                            ${collateralRequests.map(requestId => render.collateralRequest(requestId, floGlobals.myInbox[requestId]))}
+                                        </ul>
+                                    `: html`
+                                        <p>No collateral requests</p>
+                                    `}
                                 `: ''}
                                 ${view === 'loan-requests' ? html`
-                                    <h4>Loan requests</h4>
-                                    <ul class="grid gap-1">
-                                    
-                                    </ul>
+                                    ${loanRequests.length ? html`
+                                        <ul id="loan_requests_list">
+                                            ${loanRequests.map(requestId => render.loanRequest(requestId, floGlobals.loanRequests[requestId]))}
+                                        </ul>
+                                    `: html`
+                                        <div class="grid gap-2 align-center justify-center" style="padding: 2vw 0;">
+                                            <div class="grid gap-0-5">
+                                                <h1>Earn interest on your USD tokens</h1>
+                                                <p>Lend your USD tokens to earn interest assured by BTC collateral.</p>
+                                            </div>
+                                            <strong>
+                                                Borrower loan requests will appear here
+                                            </strong>
+                                    `}
                                 `: ''}
                             </div>
                         </section>
@@ -759,12 +910,6 @@
                 })
                 renderElem(getRef('sub_page_container'), html`
                     <div id="main_page" class="grid gap-2">
-                        <section class="grid gap-1">
-                            <h4>Available policies</h4>
-                            <ul id="policy_list">
-                                ${Object.entries(btcMortgage.policies).map(([policyId, policyDetails]) => render.policy(policyId, policyDetails))}
-                            </ul>
-                        </section>
                         ${inbox()}
                     </div>
                 `);
@@ -772,6 +917,20 @@
         }
         router.addRoute('', renderHome)
         router.addRoute('home', renderHome)
+
+        router.addRoute('apply-loan', async () => {
+            const loanApplication = Component(() => {
+                return html`
+                    <article id="apply_loan" class="grid gap-1">
+                        <h1>Select a policy</h1>
+                        <ul id="policy_list" class="grid gap-1">
+                            ${Object.entries(btcMortgage.policies).map(([policyId, policyDetails]) => render.policy(policyId, policyDetails))}
+                        </ul>
+                    </article>    
+                `
+            })
+            renderElem(getRef('sub_page_container'), html`${loanApplication()}`);
+        })
         router.addRoute('404', async () => {
             renderElem(getRef('app_body'), html`
                 <article class="flex flex-direction-column align-center justify-center gap-1">
@@ -832,20 +991,42 @@
                 floGlobals.isAdmin = floGlobals.myFloID === floGlobals.adminID
                 floGlobals.myInbox = {}
                 floGlobals.loanRequests = {}
+                floGlobals.btcRate = 1
+                function fetchBtcRate() {
+                    btcMortgage.getRate['BTC']().then(rate => {
+                        floGlobals.btcRate = rate
+                    }).catch(error => console.error(error))
+                }
+                fetchBtcRate()
+                setInterval(() => {
+                    fetchBtcRate()
+                }, 1000 * 60 * 5) // check BTC rate every 5 minutes
                 btcMortgage.init().then(result => {
                     console.info(result)
                     Promise.allSettled([
-                        btcMortgage.viewMyInbox(d => {
-                            floGlobals.myInbox = {
-                                ...floGlobals.myInbox,
-                                ...d
-                            }
+                        new Promise((resolve, reject) => {
+                            btcMortgage.viewMyInbox(d => {
+                                floGlobals.myInbox = {
+                                    ...floGlobals.myInbox,
+                                    ...d
+                                }
+                                console.log('INBOX', d)
+                                resolve()
+                            }).catch(error => {
+                                reject(error)
+                            })
                         }),
-                        btcMortgage.listLoanRequests(d => {
-                            floGlobals.loanRequests = {
-                                ...floGlobals.loanRequests,
-                                ...d
-                            }
+                        new Promise((resolve, reject) => {
+                            btcMortgage.listLoanRequests(d => {
+                                floGlobals.loanRequests = {
+                                    ...floGlobals.loanRequests,
+                                    ...d
+                                }
+                                console.log('LOAN REQUESTS', d)
+                                resolve()
+                            }).catch(error => {
+                                reject(error)
+                            })
                         })
                     ]).then(result => {
                         console.log(result)
@@ -855,8 +1036,20 @@
                         } else {
                             router.routeTo(window.location.hash)
                         }
+                    }).catch(error => {
+                        console.error(error)
+                        notify(error, 'error')
                     })
-                }).catch(error => console.error(error))
+                }).catch(error => {
+                    let isBrave = navigator.brave !== undefined
+                    if (error === 'Cloud offline') {
+                        document.body.prepend(document.createElement('adblocker-warning'))
+                    } else if (error === "App database initiation failed") {
+
+                    } else {
+                        notify(error, "error")
+                    }
+                })
             }).catch(error => console.error(error))
         }
     </script>

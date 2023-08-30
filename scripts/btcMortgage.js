@@ -150,7 +150,6 @@
             get: () => APP_NAME + '#' + floCrypto.toFloID(floDapps.user.id)
         }
     })
-    btcMortgage.policies = POLICIES;
 
     //get BTC rates
     const getRate = btcMortgage.getRate = {};
@@ -1811,5 +1810,8 @@
             }).catch(error => reject(error))
         })
     }
+
+    btcMortgage.policies = POLICIES;
+    btcMortgage.loans = LOANS;
 
 })(window.btcMortgage = {})
