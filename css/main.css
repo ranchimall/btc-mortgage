@@ -128,9 +128,9 @@ button:not(:disabled),
 }
 
 button:disabled {
-  opacity: 0.4;
   cursor: not-allowed;
-  filter: saturate(0);
+  background-color: rgba(var(--text-color), 0.03);
+  color: rgba(var(--text-color), 0.5);
 }
 
 .cta {
@@ -699,9 +699,29 @@ h3 {
 #main_page {
   display: grid;
   min-width: 0;
-  width: min(64rem, 100%);
+  width: min(72rem, 100%);
   margin: auto;
   grid-template-columns: minmax(0, 1fr);
+  align-items: flex-start;
+}
+
+#balance_list {
+  display: flex;
+  flex-direction: column;
+  justify-items: flex-start;
+  gap: 0.5rem;
+}
+
+.balance-card {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.7rem;
+  border-radius: 0.5rem;
+  background-color: rgba(var(--foreground-color), 1);
+}
+.balance-card span:last-of-type {
+  font-weight: 700;
+  font-size: 1rem;
 }
 
 #apply_loan {
@@ -747,6 +767,61 @@ h3 {
 #request_loan_form label input {
   height: 1.2em;
   width: 1.2em;
+}
+
+.loan-process {
+  background-color: rgba(var(--foreground-color), 1);
+  padding: max(1rem, 1.5vw);
+  border-radius: 0.5rem;
+}
+.loan-process ul {
+  display: grid;
+}
+.loan-process ul li {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: auto 1fr;
+}
+.loan-process .progress {
+  display: grid;
+  justify-content: center;
+  justify-items: center;
+  isolation: isolate;
+}
+.loan-process .progress > * {
+  grid-area: 1/1/2/2;
+}
+.loan-process li.done .circle {
+  background-color: var(--green);
+  border: solid 0.1rem var(--green);
+}
+.loan-process li.done .line {
+  background-color: var(--green);
+}
+.loan-process .circle {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background-color: rgba(var(--foreground-color), 1);
+  z-index: 1;
+  border: solid 0.1rem rgba(var(--text-color), 0.5);
+}
+.loan-process .line {
+  width: 0.1rem;
+  height: 100%;
+  background-color: rgba(var(--text-color), 0.5);
+}
+.loan-process .details {
+  display: grid;
+  gap: 0.3rem;
+  padding-bottom: 2rem;
+}
+.loan-process .details button {
+  margin-top: 0.5rem;
+}
+.loan-process time {
+  font-size: 0.9rem;
+  color: rgba(var(--text-color), 0.8);
 }
 
 #collateral_requests_list {
@@ -804,6 +879,15 @@ h3 {
   }
   .popup__header {
     padding: 1.5rem 1.5rem 0 0.75rem;
+  }
+  #main_page {
+    grid-template-columns: 18rem 1fr;
+  }
+  #main_page > :first-child {
+    position: -webkit-sticky;
+    position: sticky;
+    top: 1rem;
+    overflow-y: auto;
   }
   #request_loan_popup {
     --width: 32rem;

@@ -415,7 +415,7 @@
     function stringifyLoanOpenData(
         borrower, loan_amount, policy_id, btc_start_rate,
         coborrower, collateral_value, collateral_lock_id,
-        lender, loan_transfer_id, lender_sign
+        lender, loan_transfer_id, lender_sign, loan_opening_process_id
     ) {
         return [
             LOAN_DETAILS_IDENTIFIER,
@@ -428,7 +428,8 @@
             "BTC rate:" + btc_start_rate + "USD",
             "Lender:" + floCrypto.toFloID(lender),
             "TokenTransfer:" + loan_transfer_id,
-            "Signature-L:" + lender_sign
+            "Signature-L:" + lender_sign,
+            "LoanOpeningProcessID:" + loan_opening_process_id
         ].join('|');
         /*MAYDO: Maybe make it a worded sentence?
             BTC Mortgage: 
@@ -457,6 +458,7 @@
                 case "Lender": details.lender = d[1]; break;
                 case "TokenTransfer": details.loan_transfer_id = d[1]; break;
                 case "Signature-L": details.lender_sign = d[1]; break;
+                case "LoanOpeningProcessID": details.loan_opening_process_id = d[1]; break;
             }
         });
         return details;
@@ -900,7 +902,6 @@
                 .catch(error => reject(error))
         })
     }
-
     //view responses 
     btcMortgage.viewMyInbox = function (callback = undefined) {
         return new Promise((resolve, reject) => {
@@ -913,6 +914,27 @@
         })
     }
 
+    btcMortgage.viewMyOutbox = (callback = undefined) => { //view all inbox
+        return new Promise((resolve, reject) => {
+            let options = { senderID: floDapps.user.id }
+            if (callback instanceof Function)
+                options.callback = callback;
+            floCloudAPI.requestApplicationData(null, options)
+                .then(_ => {
+                    compactIDB.readAllData("outbox")
+                        .then(result => {
+                            for (const key in result) {
+                                result[key].message = floCloudAPI.util.decodeMessage(result[key].message);
+                            }
+                            resolve(result);
+                        })
+                        .catch(error => reject(error))
+                })
+                .catch(error => {
+                    console.log(error);
+                })
+        })
+    }
 
     /*Loan Opening*/
 
@@ -931,7 +953,8 @@
             //request collateral from coborrower
             floCloudAPI.sendApplicationData({
                 borrower, coborrower,
-                loan_amount, policy_id
+                loan_amount, policy_id,
+                loan_opening_process_id: floCrypto.randString(12, true)
             }, TYPE_LOAN_COLLATERAL_REQUEST, { receiverID: coborrower })
                 .then(result => {
                     compactIDB.addData("outbox", result, result.vectorClock);
@@ -943,20 +966,18 @@
     function validate_loanCollateral_request(loan_collateral_req_id, borrower, coborrower) {
         return new Promise((resolve, reject) => {
             floCloudAPI.requestApplicationData(TYPE_LOAN_COLLATERAL_REQUEST, { atVectorClock: loan_collateral_req_id, receiverID: coborrower }).then(loan_collateral_req => {
-                loan_collateral_req = loan_collateral_req[loan_collateral_req_id];
-                if (!loan_collateral_req)
+                const { senderID, receiverID, message: { loan_amount, policy_id, loan_opening_process_id }, pubkey } = loan_collateral_req[loan_collateral_req_id];
+                if (!loan_collateral_req[loan_collateral_req_id])
                     return reject(RequestValidationError(TYPE_LOAN_REQUEST, "request not found"));
-                if (!floCrypto.isSameAddr(loan_collateral_req.senderID, borrower))
+                if (!floCrypto.isSameAddr(senderID, borrower))
                     return reject(RequestValidationError(TYPE_LOAN_COLLATERAL_REQUEST, "sender is not borrower"));
-                if (!floCrypto.isSameAddr(loan_collateral_req.receiverID, coborrower))
+                if (!floCrypto.isSameAddr(receiverID, coborrower))
                     return reject(RequestValidationError(TYPE_LOAN_COLLATERAL_REQUEST, "receiver is not coborrower"));
-                let { loan_amount, policy_id } = loan_collateral_req.message;
                 if (typeof loan_amount !== 'number' || loan_amount <= 0 || !VALUE_REGEX.test(loan_amount))
                     return reject(RequestValidationError(TYPE_LOAN_COLLATERAL_REQUEST, "Invalid loan amount"));
                 if (!(policy_id in POLICIES))
                     return reject(RequestValidationError(TYPE_LOAN_COLLATERAL_REQUEST, "Invalid policy"));
-                let result = { loan_amount, policy_id, borrower, coborrower };
-                result.borrower_pubKey = loan_collateral_req.pubKey;
+                let result = { loan_amount, policy_id, borrower, coborrower, loan_opening_process_id, borrower_pubKey: pubkey };
                 resolve(result);
             }).catch(error => reject(error))
         })
@@ -967,7 +988,7 @@
         return new Promise((resolve, reject) => {
             const coborrower = floDapps.user.id;
             //validate request
-            validate_loanCollateral_request(loan_collateral_req_id, borrower, coborrower).then(({ loan_amount, policy_id }) => {
+            validate_loanCollateral_request(loan_collateral_req_id, borrower, coborrower).then(({ loan_amount, policy_id, loan_opening_process_id }) => {
                 //calculate required collateral
                 getRate["BTC"]().then(rate => {
                     let policy = POLICIES[policy_id];
@@ -981,7 +1002,7 @@
                         //post request
                         floCloudAPI.sendApplicationData({
                             borrower, coborrower,
-                            loan_amount, policy_id, loan_collateral_req_id,
+                            loan_amount, policy_id, loan_collateral_req_id, loan_opening_process_id,
                             collateral: {
                                 rate,
                                 btc_id: coborrower_btcID,
@@ -1001,12 +1022,11 @@
     function validate_loan_request(loan_req_id, borrower, coborrower) {
         return new Promise((resolve, reject) => {
             floCloudAPI.requestApplicationData(TYPE_LOAN_REQUEST, { atVectorClock: loan_req_id }).then(loan_req => {
-                loan_req = loan_req[loan_req_id];
-                if (!loan_req)
+                const { senderID, message: { loan_collateral_req_id, loan_amount, policy_id, collateral }, pubKey } = loan_req[loan_req_id];
+                if (!loan_req[loan_req_id])
                     return reject(RequestValidationError(TYPE_LOAN_REQUEST, "request not found"));
-                if (!floCrypto.isSameAddr(coborrower, loan_req.senderID))
+                if (!floCrypto.isSameAddr(coborrower, senderID))
                     return reject(RequestValidationError(TYPE_LOAN_REQUEST, "request not posted by coborrower"))
-                let { loan_collateral_req_id, loan_amount, policy_id, collateral } = loan_req.message;
                 if (!floCrypto.isSameAddr(collateral.btc_id, coborrower))
                     return reject(RequestValidationError(TYPE_LOAN_REQUEST, "collateral btc id is not coborrower"));
                 validate_loanCollateral_request(loan_collateral_req_id, borrower, coborrower).then(result => {
@@ -1022,7 +1042,7 @@
                         if (required_collateral > collateral.quantity)
                             return reject(RequestValidationError(TYPE_LOAN_REQUEST, "Insufficient collateral value"));
                         result.collateral = collateral;
-                        result.coborrower_pubKey = loan_req.pubKey;
+                        result.coborrower_pubKey = pubKey;
                         resolve(result)
                     }).catch(error => reject(error))
                 }).catch(error => reject(error))
@@ -1035,7 +1055,7 @@
     btcMortgage.respondLoan = function (loan_req_id, borrower, coborrower) {
         return new Promise((resolve, reject) => {
             const lender = floDapps.user.id;
-            validate_loan_request(loan_req_id, borrower, coborrower).then(({ loan_amount, borrower, collateral }) => {
+            validate_loan_request(loan_req_id, borrower, coborrower).then(({ loan_amount, borrower, collateral, loan_opening_process_id }) => {
                 //check if collateral is available
                 btcOperator.getBalance(collateral.btc_id).then(coborrower_balance => {
                     if (coborrower_balance < collateral.quantity)
@@ -1047,7 +1067,8 @@
                             return reject("Insufficient tokens to lend");
                         floCloudAPI.sendApplicationData({
                             lender, borrower, coborrower,
-                            loan_req_id
+                            loan_req_id,
+                            loan_opening_process_id
                         }, TYPE_LENDER_RESPONSE, { receiverID: borrower })
                             .then(result => {
                                 compactIDB.addData("outbox", result, result.vectorClock);
@@ -1062,12 +1083,11 @@
     function validate_lender_response(lender_res_id, borrower, coborrower, lender) {
         return new Promise((resolve, reject) => {
             floCloudAPI.requestApplicationData(TYPE_LENDER_RESPONSE, { atVectorClock: lender_res_id, receiverID: borrower }).then(lender_res => {
-                lender_res = lender_res[lender_res_id];
-                if (!lender_res)
+                const { senderID, message: { loan_req_id }, pubKey } = lender_res[lender_res_id];
+                if (!lender_res[lender_res_id])
                     return reject(RequestValidationError(TYPE_LENDER_RESPONSE, "request not found"));
-                if (!floCrypto.isSameAddr(lender, lender_res.senderID))
+                if (!floCrypto.isSameAddr(lender, senderID))
                     return reject(RequestValidationError(TYPE_LENDER_RESPONSE, "request not sent by lender"))
-                let { loan_req_id } = lender_res.message;
                 validate_loan_request(loan_req_id, borrower, coborrower).then(result => {
                     let { loan_amount } = result;
                     //check if loan amount (token) is available to lend
@@ -1076,7 +1096,7 @@
                         if (lender_tokenBalance < loan_amount)
                             return reject(RequestValidationError(TYPE_LENDER_RESPONSE, "lender doesnot have sufficient funds to lend"));
                         result.lender = lender;
-                        result.lender_pubKey = lender_res.pubKey;
+                        result.lender_pubKey = pubKey;
                         resolve(result);
                     }).catch(error => reject(error))
                 }).catch(error => reject(error))
@@ -1088,12 +1108,13 @@
     btcMortgage.requestCollateralLock = function (lender_res_id, coborrower, lender, privKey) {
         return new Promise((resolve, reject) => {
             const borrower = floDapps.user.id;
-            validate_lender_response(lender_res_id, borrower, coborrower, lender).then(({ loan_amount, policy_id }) => {
+            validate_lender_response(lender_res_id, borrower, coborrower, lender).then(({ loan_amount, policy_id, loan_opening_process_id }) => {
                 //send request to coborrower for locking the collateral asset
                 let borrower_sign = sign_borrower(privKey, loan_amount, policy_id, coborrower, lender);
                 floCloudAPI.sendApplicationData({
                     lender, borrower, coborrower,
-                    lender_res_id, borrower_sign
+                    lender_res_id, borrower_sign,
+                    loan_opening_process_id
                 }, TYPE_COLLATERAL_LOCK_REQUEST, { receiverID: coborrower })
                     .then(result => {
                         compactIDB.addData("outbox", result, result.vectorClock);
@@ -1129,7 +1150,7 @@
     btcMortgage.lockCollateral = function (collateral_lock_req_id, borrower, lender, privKey) {
         return new Promise((resolve, reject) => {
             const coborrower = floDapps.user.id;
-            validate_collateralLock_request(collateral_lock_req_id, borrower, coborrower, lender).then(({ borrower_sign, collateral, lender_pubKey }) => {
+            validate_collateralLock_request(collateral_lock_req_id, borrower, coborrower, lender).then(({ borrower_sign, collateral, lender_pubKey, loan_opening_process_id }) => {
                 //lock collateral
                 lockCollateralInBlockchain(privKey, lender_pubKey, collateral.quantity).then(collateral_txid => {
                     //sign and request lender to finalize
@@ -1137,7 +1158,8 @@
                     floCloudAPI.sendApplicationData({
                         borrower, coborrower, lender,
                         collateral_lock_id: collateral_txid,
-                        coborrower_sign, collateral_lock_req_id
+                        coborrower_sign, collateral_lock_req_id,
+                        loan_opening_process_id
                     }, TYPE_COLLATERAL_LOCK_ACK, { receiverID: lender })
                         .then(result => {
                             compactIDB.addData("outbox", result, result.vectorClock);
@@ -1193,7 +1215,7 @@
         return new Promise((resolve, reject) => {
             const lender = floDapps.user.id;
             validate_collateralLock_ack(collateral_lock_ack_id, borrower, coborrower, lender).then(result => {
-                let { loan_amount, policy_id, collateral, collateral_lock_id, borrower_sign, coborrower_sign } = result;
+                let { loan_amount, policy_id, collateral, collateral_lock_id, borrower_sign, coborrower_sign, loan_opening_process_id } = result;
                 //check if collateral is already used on a different loan
                 for (let l in LOANS)
                     if (LOANS[l].collateral_lock_id === collateral_lock_id)
@@ -1212,14 +1234,14 @@
                     let loan_blockchain_data = stringifyLoanOpenData(
                         borrower, loan_amount, policy_id, collateral.rate,
                         coborrower, collateral.quantity, collateral_lock_id,
-                        lender, token_txid, lender_sign
+                        lender, token_txid, lender_sign, loan_opening_process_id
                     );
                     let receivers = [borrower, coborrower].map(addr => floCrypto.toFloID(addr));
                     //write loan details in blockchain
                     floBlockchainAPI.writeDataMultiple([privKey], loan_blockchain_data, receivers)
                         .then(loan_txid => resolve(loan_txid))
                         .catch(error => {
-                            compactIDB.writeData("fail_safe", loan_blockchain_data, token_txid); //fail-safe mech if token is transfered but details not added to blockchain. this helps to retry fail-safe
+                            compactIDB.writeData("fail_safe", loan_blockchain_data, token_txid); //fail-safe mech if token is transferred but details not added to blockchain. this helps to retry fail-safe
                             reject({ error, fail_safe: token_txid })
                         })
                 }).catch(error => reject(error))
@@ -1382,7 +1404,7 @@
     btcMortgage.banker = {};
     btcMortgage.requestBanker = {};
 
-    // C: request T (banker) for collateral refund when lender hasnt dispersed the loan for 24 hrs
+    // C: request T (banker) for collateral refund when lender hasn't dispersed the loan for 24 hrs
     btcMortgage.requestBanker.refundCollateral = function (collateral_lock_ack_id, borrower, lender, privKey) {
         return new Promise((resolve, reject) => {
             const coborrower = floDapps.user.id;
