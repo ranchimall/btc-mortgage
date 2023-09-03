@@ -407,7 +407,7 @@
             return amount.toLocaleString(currency === 'inr' ? `en-IN` : 'en-US', { style: 'currency', currency, maximumFractionDigits: currency === 'usd' ? 2 : 8 })
         }
         const render = {
-            policy(id, details = {}) {
+            policy(policyId, details = {}) {
                 const { duration, interest, loan_collateral_ratio, policy_creation_time, pre_liquidation_threshold } = details;
                 function initLoanRequestProcess() {
                     const loanRequestForm = Component(() => {
@@ -499,21 +499,24 @@
                 }
                 async function requestLoan() {
                     buttonLoader('request_loan_button', true)
-                    btcMortgage.requestLoanCollateral(loanAmount, id, collateralProvider).then(() => {
-                        if (collateralProvider === floGlobals.myBtcID) {
-                            notify('You will receive request to provide collateral soon. Approve it to complete the loan request.', 'success')
+                    try {
+                        const isProvidingCollateral = floCrypto.isSameAddr(collateralProvider, floDapps.user.id)
+                        const { vectorClock: loanRequestID } = await btcMortgage.requestLoanCollateral(loanAmount, policyId, collateralProvider)
+                        if (isProvidingCollateral) {
+                            await btcMortgage.requestLoan(loanRequestID, floDapps.user.id)
                         } else {
                             notify('Loan request sent to collateral provider', 'success')
                         }
+                        location.hash = '#/home/my-loans'
                         closePopup()
-                    }).catch(err => {
+                    } catch (err) {
                         console.error(err)
                         notify('There was error requesting loan. please try again after some time.', 'error')
                         buttonLoader('request_loan_button', false)
-                    })
+                    }
                 }
                 return html`
-                    <li class="policy" .dataset=${{ policyId: id }}>
+                    <li class="policy" .dataset=${{ policyId }}>
                         <div class="grid gap-0-3">
                             <h5>Duration</h5>
                             <p>${duration}</p>
@@ -534,87 +537,23 @@
                     </li>    
                 `
             },
-            collateralRequest(requestId, details = {}) {
-                const { message: { borrower, coborrower, loan_amount, policy_id }, vectorClock } = details;
-                const collateralAmount = btcMortgage.util.toFixedDecimal(btcMortgage.policies[policy_id].loan_collateral_ratio * (loan_amount / floGlobals.btcRate))
-                async function approveCollateralRequest(e) {
-                    const confirmation = await getConfirmation('Send collateral?', { message: `You are about to send ${formatAmount(collateralAmount)} collateral to the borrower. Continue?`, confirmText: 'Send', cancelText: 'Cancel' })
-                    if (!confirmation)
-                        return;
-                    e.target.disabled = true;
-                    e.target.textContent = 'Sending...'
-                    try {
-                        await btcMortgage.requestLoan(vectorClock, borrower)
-                        await floCloudAPI.noteApplicationData(vectorClock, 'approved')
-                        floGlobals.myInbox[vectorClock].note = 'approved';
-                        notify('Collateral sent successfully', 'success')
-                        router.routeTo(location.hash)
-                    } catch (err) {
-                        notify(err, 'error')
-                        e.target.textContent = 'Approve'
-                    } finally {
-                        e.target.disabled = false;
-                    }
-                }
-                async function rejectCollateralRequest(e) {
-                    const confirmation = await getConfirmation('Reject collateral request?', { message: `You are about to reject the collateral request. Continue?`, confirmText: 'Reject', cancelText: 'Cancel' })
-                    if (!confirmation)
-                        return;
-                    e.target.disabled = true;
-                    e.target.textContent = 'Rejecting...'
-                    try {
-                        console.log(vectorClock)
-                        await floCloudAPI.noteApplicationData(vectorClock, 'rejected')
-                        floGlobals.myInbox[vectorClock].note = 'rejected';
-                    } catch (err) {
-                        notify(err, 'error')
-                        e.target.textContent = 'Reject'
-                    } finally {
-                        e.target.disabled = false;
-                    }
-                }
-
-                return html`
-                    <li class="collateral-request">
-                        <fieldset class="grid gap-1">
-                            <legend>Borrower</legend>
-                                <div class="grid gap-0-3">
-                                    <p>BTC address</p>
-                                    <sm-copy value=${getBtcAddress(borrower)}>
-                                        <b>${getBtcAddress(borrower)}</b>
-                                    </sm-copy>
-                                </div>
-                                <div class="grid gap-0-3">
-                                    <p>FLO address</p>
-                                    <sm-copy value=${getFloAddress(borrower)}>
-                                        <b>${getFloAddress(borrower)}</b>
-                                    </sm-copy>
-                                </div>
-                        </fieldset>
-                        <div class="grid gap-0-3">
-                            <p>Amount</p>
-                            <b style="font-size: 1.2rem;">${formatAmount(collateralAmount)}</b>
-                        </div>
-                        <div class="flex gap-0-5 align-center margin-left-auto">
-                            <button class="button button--colored" onclick=${rejectCollateralRequest}>Reject</button>
-                            <button class="button button--primary" onclick=${approveCollateralRequest}>Approve</button>
-                        </div>
-                    </li>
-                `
-            },
             loanRequest(requestId, details) {
                 const { message: { borrower, coborrower, collateral: { btc_id, quantity, rate }, loan_amount, loan_collateral_req_id, policy_id }, vectorClock } = details;
                 const { duration, interest } = btcMortgage.policies[policy_id];
-                async function acceptLoanProposal() {
-                    const confirmation = await getConfirmation('Accept loan proposal?', { message: `You are about to accept the loan proposal. Continue?`, confirmText: 'Accept', cancelText: 'Cancel' })
+                const [isLending, setIsLending] = useState(false)
+                async function startLendingProcess() {
+                    const confirmation = await getConfirmation('Start lending process?', { message: `You'll be participating in loan lending. Continue?`, confirmText: 'Continue', cancelText: 'Cancel' })
                     if (!confirmation)
                         return;
-                    btcMortgage.respondLoan(loan_collateral_req_id, borrower, coborrower).then(() => {
-                        notify('Loan proposal accepted', 'success')
+                    setIsLending(true)
+                    btcMortgage.respondLoan(vectorClock, borrower, coborrower).then(() => {
+                        notify('Lending process started successfully.', 'success')
                         router.routeTo(location.hash)
                     }).catch(err => {
                         console.error(err)
-                        notify('There was error accepting loan proposal. please try again after some time.', 'error')
+                        notify('There was error starting lending process. please try again after some time.', 'error')
+                    }).finally(() => {
+                        setIsLending(false)
                     })
                 }
                 return html`
@@ -654,80 +593,116 @@
                             </div>
                         </div>
                         <div class="flex gap-0-5 align-center margin-left-auto">
-                            <button class="button button--primary" onclick=${acceptLoanProposal}>Start lending</button>
+                            <button class="button button--primary" onclick=${startLendingProcess} disabled=${isLending}>
+                                ${isLending ? html`
+                                    Starting lending process
+                                    <sm-spinner class="margin-left-0-5"></sm-spinner>
+                                `: html`
+                                    Start lending
+                                `}    
+                            </button>
                         </div>
                 `
             },
             loanProcess(details = {}) {
                 const {
-                    time,
-                    hasProvidedCollateral, hasAgreedToLend, hasLockedCollateral, hasIssuedLoan,
-                    collateralRequestID, loanRequestID, loanResponseID, collateralLockAckID
+                    loanOpeningProcessID,
+                    borrower, coborrower, lender, isLender, loanAmount, policyID,
+                    initiationTime, loanRequestTime, loanResponseTime, collateralLockAckTime,
+                    hasProvidedCollateral, hasAgreedToLend, hasRequestedCollateralLock, hasLockedCollateral, hasIssuedLoan,
+                    collateralRequestID, loanRequestID, loanResponseID, collateralLockRequestID, collateralLockAckID
                 } = details
-                const { message: { borrower, coborrower, loan_amount, policy_id } } = floGlobals.myInbox[collateralRequestID]
+                console.log(details)
                 return Component(() => {
-                    const [sendingCollateral, setSendingCollateral] = useState(false)
-                    const collateralAmount = btcMortgage.util.toFixedDecimal(btcMortgage.policies[policy_id].loan_collateral_ratio * (loan_amount / floGlobals.btcRate))
-                    async function approveCollateralRequest(e) {
-                        const confirmation = await getConfirmation('Send collateral?', { message: `You are about to send ${formatAmount(collateralAmount)} as collateral. Continue?`, confirmText: 'Send', cancelText: 'Cancel' })
+                    const [verifyingCollateral, setVerifyCollateral] = useState(false)
+                    let collateralAmount = 0
+                    if (!isLender)
+                        collateralAmount = btcMortgage.util.toFixedDecimal(btcMortgage.policies[policyID]?.loan_collateral_ratio * (loanAmount / floGlobals.btcRate)) || 0
+                    async function verifyCollateral(e) {
+                        const confirmation = await getConfirmation('Verify collateral?', { message: `You are about to check for ${formatAmount(collateralAmount)} as collateral. Continue?`, confirmText: 'Verify', cancelText: 'Cancel' })
                         if (!confirmation)
                             return;
-                        setSendingCollateral(true)
+                        setVerifyCollateral(true)
                         try {
                             await btcMortgage.requestLoan(collateralRequestID, borrower)
-                            await floCloudAPI.noteApplicationData(collateralRequestID, 'approved')
-                            floGlobals.myInbox[collateralRequestID].note = 'approved';
-                            notify('Collateral sent successfully', 'success')
+                            notify('Collateral verified successfully', 'success')
                         } catch (err) {
                             notify(err, 'error')
-                            setSendingCollateral(false)
+                            setVerifyCollateral(false)
+                        }
+                    }
+                    const [lockingCollateral, setLockingCollateral] = useState(false)
+                    async function lockCollateral() {
+                        const confirmation = await getConfirmation('Lock collateral?', { message: `You are about to lock ${formatAmount(collateralAmount)} as collateral. Continue?`, confirmText: 'Lock', cancelText: 'Cancel' })
+                        if (!confirmation)
+                            return;
+                        try {
+                            setLockingCollateral(true)
+                            let collateralLockID = collateralLockRequestID
+                            if (!collateralLockID) {
+                                const { vectorClock } = await btcMortgage.requestCollateralLock(loanResponseID, coborrower, lender, await floDapps.user.private)
+                                collateralLockID = vectorClock
+                            }
+                            await btcMortgage.lockCollateral(collateralLockID, borrower, lender, await floDapps.user.private)
+                            notify('Collateral locked successfully', 'success')
+                            router.routeTo(location.hash)
+                        } catch (err) {
+                            notify(err, 'error')
+                            setLockingCollateral(false)
+                        }
+                    }
+                    // TODO: UI for coborrower to request collateral lock
+                    async function requestCollateralLock() {
+                        btcMortgage.requestCollateralLock(loanResponseID, coborrower, lender, await floDapps.user.private).then(() => {
+                            notify('Collateral lock request sent successfully', 'success')
+                            router.routeTo(location.hash)
+                        }).catch(err => {
+                            notify(err, 'error')
+                        })
+                    }
+
+                    const [isIssuingLoan, setIsIssuingLoan] = useState(false)
+                    async function issueLoan() {
+                        try {
+                            await btcMortgage.sendLoanAmount(collateralLockAckID, borrower, coborrower, await floDapps.user.private)
+                            notify('Loan issued successfully', 'success')
+                        } catch (err) {
+                            notify(err, 'error')
                         }
                     }
 
                     return html`
                     <li class="loan-process">
+                        <p>Loan request: ${loanOpeningProcessID}</p>
                         <ul>
-                            <li class="done">
-                                <div class="progress">
-                                    <div class="circle"></div>
-                                    <div class="line"></div>
-                                </div>
-                                <div class="details">
-                                    <h4>Initiated loan request</h4>
-                                    <time>${getFormattedTime(time)}</time>
-                                </div>
-                            </li>
-                            <li class=${`${hasProvidedCollateral ? 'done' : ''}`}>
-                                <div class="progress">
-                                    <div class="circle"></div>
-                                    <div class="line"></div>
-                                </div>
-                                <div class="details">
-                                    ${hasProvidedCollateral ? html`
-                                        <h4>Collateral provided</h4>
-                                        ${hasAgreedToLend ? html`
-                                            <time>Collateral time</time>
+                            ${!isLender ? html`                                
+                                <li class=${`${hasProvidedCollateral ? 'done' : ''}`}>
+                                    <div class="progress">
+                                        <div class="circle"></div>
+                                        <div class="line"></div>
+                                    </div>
+                                    <div class="details">
+                                        <h4>Initiated loan request</h4>
+                                        ${hasProvidedCollateral ? html`
+                                            <time>${getFormattedTime(initiationTime)}</time>
                                         `: html`
-                                            <p>Collateral has been sent by the collateral provider. Waiting for borrower to accept the loan proposal.</p>
+                                            ${floCrypto.isSameAddr(coborrower, floDapps.user.id) ? html`
+                                            <p>Verify that you have <b>${formatAmount(collateralAmount)}</b> as collateral</p>
+                                                <button class="button button--primary margin-right-auto" disabled=${verifyingCollateral} onclick=${verifyCollateral}>
+                                                    ${verifyingCollateral ? html`
+                                                        Verifying collateral
+                                                        <sm-spinner class="margin-left-0-5"></sm-spinner>
+                                                    `: html`
+                                                        Verify collateral
+                                                    `}
+                                                </button>
+                                            `: html`
+                                                <p>Waiting for Co-Borrower to confirm collateral availability</p>
+                                            `}
                                         `}
-                                    `: html`
-                                        <h4>Waiting for collateral</h4>
-                                        <p>Collateral amount is <b>${formatAmount(collateralAmount)}</b></p>
-                                        ${floCrypto.isSameAddr(coborrower, floDapps.user.id) ? html`
-                                            <button class="button button--primary margin-right-auto" disabled=${sendingCollateral} onclick=${approveCollateralRequest}>
-                                                ${sendingCollateral ? html`
-                                                    Sending collateral
-                                                    <sm-spinner class="margin-left-0-5"></sm-spinner>
-                                                `: html`
-                                                    Send collateral
-                                                `}
-                                            </button>
-                                        `: html`
-                                            <p>Waiting for collateral to be sent by <strong class="wrap-around">${coborrower}</strong>.</p>
-                                        `}
-                                    `}
-                                </div>
-                            </li>
+                                    </div>
+                                </li>
+                            `: ''}
                             <li class=${`${hasAgreedToLend ? 'done' : ''}`}>
                                 <div class="progress">
                                     <div class="circle"></div>
@@ -735,15 +710,38 @@
                                 </div>
                                 <div class="details">
                                     ${hasAgreedToLend ? html`
-                                        <h4>Lender accepted loan proposal</h4>
-                                        ${hasLockedCollateral ? html`
-                                            <time>Loan time</time>
-                                        `: html`
-                                            <p>Waiting for collateral to be locked.</p>
-                                        `}
+                                        <h4>Started lending process</h4>
+                                        <time>${getFormattedTime(loanResponseTime)}</time>
                                     `: html`
                                         <h4>Waiting for a lender</h4>
-                                        <p>Waiting for a lender to accept the loan request.</p>
+                                        <p>Your loan request has been posted to the marketplace. Waiting for a lender to start lending process.</p>
+                                    `}
+                                </div>
+                            </li>
+                            <li class=${`${hasLockedCollateral ? 'done' : ''}`}>
+                                <div class="progress">
+                                    <div class="circle"></div>
+                                    <div class="line"></div>
+                                </div>
+                                <div class="details">
+                                    ${hasLockedCollateral ? html`
+                                        <h4>Collateral locked</h4>
+                                    `: html`
+                                        <h4>Waiting for collateral to be locked</h4>
+                                        ${hasAgreedToLend && (floCrypto.isSameAddr(borrower, floDapps.user.id) || floCrypto.isSameAddr(coborrower, floDapps.user.id)) ? html`
+                                            ${floCrypto.isSameAddr(borrower, coborrower) ? html`
+                                                <button class="button button--primary margin-right-auto" disabled=${lockingCollateral} onclick=${lockCollateral}>
+                                                    ${lockingCollateral ? html`
+                                                        Locking collateral
+                                                        <sm-spinner class="margin-left-0-5"></sm-spinner>
+                                                    `: html`
+                                                        Lock collateral
+                                                    `}
+                                                </button>
+                                            `: html`
+                                                <button class="button button--primary margin-right-auto" onclick=${requestCollateralLock}>Request collateral lock</button>    
+                                            `}
+                                        `: ''}
                                     `}
                                 </div>
                             </li>
@@ -752,16 +750,21 @@
                                     <div class="circle"></div>
                                 </div>
                                 <div class="details">
-                                    ${hasLockedCollateral ? html`
-                                        <h4>Collateral locked</h4>
-                                        ${hasIssuedLoan ? html`
-                                            <time>Loan time</time>
-                                        `: html`
-                                            <p>Collateral has been locked. Waiting for lender to issue the loan.</p>
-                                        `}
+                                    ${hasIssuedLoan ? html`
+                                        <h4>Loan issued</h4>
                                     `: html`
-                                        <h4>Waiting for collateral to be locked</h4>
-                                        <p>Waiting for collateral to be locked.</p>
+                                        ${hasLockedCollateral && floCrypto.isSameAddr(lender, floDapps.user.id) ? html`
+                                            <button class="button button--primary margin-right-auto" disabled=${isIssuingLoan} onclick=${issueLoan}>
+                                                ${isIssuingLoan ? html`
+                                                    Issuing loan
+                                                    <sm-spinner class="margin-left-0-5"></sm-spinner>
+                                                `: html`
+                                                    Issue loan
+                                                `}
+                                            </button>
+                                        `: html`
+                                            <h4>Waiting for loan to be issued</h4>
+                                        `}
                                     `}
                                 </div>
                             </li>
@@ -931,7 +934,7 @@
         }
         let userAddressTimeInterval;
         function renderHome(appState) {
-            const { lastPage, page, params: { filter = 'pending', search } = {}, wildcards: [section = 'my-loans'] = [] } = appState || {};
+            const { lastPage, page, params: { } = {}, wildcards: [section = 'my-loans'] = [] } = appState || {};
             if (floGlobals.isSubAdmin) {
                 renderElem(getRef('sub_page_container'), html`
                     <section>
@@ -951,9 +954,11 @@
                     const [view, setView] = useState(section)
                     let loanRequests = [];
                     for (const key in floGlobals.loanRequests) {
-                        const { message: { borrower, coborrower } } = floGlobals.loanRequests[key]
-                        if (!floCrypto.isSameAddr(borrower, floGlobals.myFloID) && !floCrypto.isSameAddr(coborrower, floGlobals.myFloID))
-                            loanRequests.push(key)
+                        const { message: { borrower, coborrower, loan_opening_process_id } } = floGlobals.loanRequests[key]
+                        if (floCrypto.isSameAddr(borrower, floGlobals.myFloID) || floCrypto.isSameAddr(coborrower, floGlobals.myFloID))
+                            continue
+                        if (floGlobals.inProcessRequests.has(loan_opening_process_id)) continue
+                        loanRequests.push(key)
                     }
                     function handleChange(e) {
                         history.pushState(null, null, `#/home/${e.target.value}`)
@@ -976,7 +981,8 @@
                                 ${myLoanRequests.length ? html`
                                         <ul class="grid gap-1">
                                             ${myLoanRequests.map(loan => render.loanProcess(loan))}
-                                        </ul>    
+                                        </ul> 
+                                        <a href="#/apply-loan" class="button button--primary margin-right-auto">Apply for a new loan</a>
                                     `: html`
                                         <div class="grid gap-2 align-center justify-center" style="padding: 2vw 0;">
                                             <div class="grid gap-0-5">
@@ -990,7 +996,7 @@
                                 ${view === 'loan-requests' ? html`
                                     ${loanRequests.length ? html`
                                         <ul id="loan_requests_list">
-                                            ${loanRequests.map(requestId => render.loanRequest(requestId, floGlobals.loanRequests[requestId]))}
+                                            ${loanRequests.reverse().map(requestId => render.loanRequest(requestId, floGlobals.loanRequests[requestId]))}
                                         </ul>
                                     `: html`
                                         <div class="grid gap-2 align-center justify-center" style="padding: 2vw 0;">
@@ -1008,41 +1014,41 @@
                     `
                 })
                 const balanceCard = Component(() => {
-                    const [btcBalance, setBtcBalance] = useState(0)
-                    const [floBalance, setFloBalance] = useState(0)
-                    const [usdBalance, setUsdBalance] = useState(0)
+                    const [btcBalance, setBtcBalance] = useState(floGlobals.memoBalance['BTC'])
+                    const [floBalance, setFloBalance] = useState(floGlobals.memoBalance['FLO'])
+                    const [usdBalance, setUsdBalance] = useState(floGlobals.memoBalance['USD'])
                     const [isRefreshing, setIsRefreshing] = useState(false)
-                    function refreshBalance() {
-                        setIsRefreshing(true)
-                        fetchBalance().then(() => {
-                            setIsRefreshing(false)
-                        }).catch(error => {
-                            setIsRefreshing(false)
-                            console.error(error)
-                        })
-                    }
                     function fetchBalance() {
-                        return Promise.allSettled([
+                        setIsRefreshing(true)
+                        Promise.allSettled([
                             btcOperator.getBalance(floGlobals.myBtcID),
                             floBlockchainAPI.getBalance(floGlobals.myFloID),
                             floTokenAPI.getBalance(floGlobals.myFloID, 'usd')
                         ]).then(result => {
                             const [btcBalance, floBalance, usdBalance] = result.map(({ value }) => value)
+                            floGlobals.memoBalance = {
+                                'FLO': floBalance,
+                                'BTC': btcBalance,
+                                'USD': usdBalance
+                            }
                             setBtcBalance(btcBalance)
                             setFloBalance(floBalance)
                             setUsdBalance(usdBalance)
                         }).catch(error => {
                             console.error(error)
+                        }).finally(() => {
+                            setIsRefreshing(false)
                         })
                     }
                     useEffect(() => {
-                        fetchBalance()
+                        if (lastPage !== page)
+                            fetchBalance()
                     }, [])
                     return html`
                         <div class="grid gap-1-5">
                             <div class="flex align-center space-between gap-1">
                                 <h4>My balances</h4>
-                                <button class="button button--colored button--small" disabled=${isRefreshing} onclick=${refreshBalance}>
+                                <button class="button button--colored button--small" disabled=${isRefreshing} onclick=${fetchBalance}>
                                     ${isRefreshing ? html`
                                         Refreshing <sm-spinner class="margin-left-0-5"></sm-spinner>
                                     `: html`
@@ -1093,39 +1099,58 @@
             }
             const loansInProcess = {}
             for (const key in allMessages) {
-                const { message: { loan_amount, policy_id, loan_opening_process_id } = {}, type, time } = allMessages[key]
-                if (loan_opening_process_id) {
-                    if (!loansInProcess[loan_opening_process_id]) {
-                        loansInProcess[loan_opening_process_id] = {
-                            loanOpeningProcessID: loan_opening_process_id,
-                            hasProvidedCollateral: false,
-                            hasAgreedToLend: false,
-                            hasLockedCollateral: false,
-                        }
+                const { message: { borrower, coborrower, loan_amount, policy_id, loan_opening_process_id, lender } = {}, type, time } = allMessages[key]
+                if (!loan_opening_process_id) continue
+                if (!loansInProcess[loan_opening_process_id]) {
+                    loansInProcess[loan_opening_process_id] = {
+                        loanOpeningProcessID: loan_opening_process_id,
+                        hasProvidedCollateral: false,
+                        hasAgreedToLend: false,
+                        hasLockedCollateral: false,
                     }
-                    switch (type) {
-                        case 'type_loan_collateral_request':
-                            loansInProcess[loan_opening_process_id].time = time
-                            loansInProcess[loan_opening_process_id].collateralRequestID = key
-                            break;
-                        case 'type_loan_request':
-                            loansInProcess.hasProvidedCollateral = true
-                            loansInProcess[loan_opening_process_id].loanRequestID = key
-                            break;
-                        case 'type_loan_response':
-                            loansInProcess.hasAgreedToLend = true
-                            loansInProcess[loan_opening_process_id].loanResponseID = key
-                            break;
-                        case 'type_collateral_lock_ack':
-                            loansInProcess.hasLockedCollateral = true
-                            loansInProcess[loan_opening_process_id].collateralLockAckID = key
-                            break;
-                    }
+                }
+                if (borrower)
+                    loansInProcess[loan_opening_process_id].borrower = borrower
+                if (coborrower)
+                    loansInProcess[loan_opening_process_id].coborrower = coborrower
+                if (loan_amount)
+                    loansInProcess[loan_opening_process_id].loanAmount = loan_amount
+                if (policy_id)
+                    loansInProcess[loan_opening_process_id].policyID = policy_id
+                if (lender) {
+                    loansInProcess[loan_opening_process_id].lender = lender
+                    loansInProcess[loan_opening_process_id].isLender = floCrypto.isSameAddr(lender, floDapps.user.id)
+                }
+                switch (type) {
+                    case 'type_loan_collateral_request':
+                        loansInProcess[loan_opening_process_id].initiationTime = time
+                        loansInProcess[loan_opening_process_id].collateralRequestID = key
+                        break;
+                    case 'type_loan_request':
+                        loansInProcess[loan_opening_process_id].loanRequestTime = time
+                        loansInProcess[loan_opening_process_id].hasProvidedCollateral = true
+                        loansInProcess[loan_opening_process_id].loanRequestID = key
+                        break;
+                    case 'type_loan_response':
+                        loansInProcess[loan_opening_process_id].loanResponseTime = time
+                        loansInProcess[loan_opening_process_id].hasAgreedToLend = true
+                        loansInProcess[loan_opening_process_id].loanResponseID = key
+                        break;
+                    case "type_collateral_lock_request":
+                        loansInProcess[loan_opening_process_id].collateralLockRequestTime = time
+                        loansInProcess[loan_opening_process_id].collateralLockRequestID = key
+                        loansInProcess[loan_opening_process_id].hasRequestedCollateralLock = true
+                        break;
+                    case 'type_collateral_lock_ack':
+                        loansInProcess[loan_opening_process_id].collateralLockAckTime = time
+                        loansInProcess[loan_opening_process_id].hasLockedCollateral = true
+                        loansInProcess[loan_opening_process_id].collateralLockAckID = key
+                        break;
                 }
             }
             // sort by time
             const sortedLoansInProcess = Object.values(loansInProcess).sort((a, b) => {
-                return b.time - a.time
+                return b.initiationTime - a.initiationTime
             })
             return sortedLoansInProcess
         }
@@ -1201,11 +1226,17 @@
                 floGlobals.myBtcID = getBtcAddress(floGlobals.myFloID)
                 floGlobals.isSubAdmin = floGlobals.subAdmins.includes(floGlobals.myFloID)
                 floGlobals.isAdmin = floGlobals.myFloID === floGlobals.adminID
+                floGlobals.loaded = false
                 floGlobals.myInbox = {}
                 floGlobals.myOutbox = {}
                 floGlobals.loanRequests = {}
                 floGlobals.requestTypes = {}
                 floGlobals.btcRate = 1
+                floGlobals.memoBalance = {
+                    'FLO': 0,
+                    'BTC': 0,
+                    'USD': 0
+                }
                 function fetchBtcRate() {
                     btcMortgage.getRate['BTC']().then(rate => {
                         floGlobals.btcRate = rate
@@ -1225,7 +1256,9 @@
                                     ...d
                                 }
                                 console.log('INBOX', d)
-                                router.routeTo(location.hash)
+                                if (floGlobals.loaded) {
+                                    router.routeTo(window.location.hash)
+                                }
                                 resolve()
                             }).catch(error => {
                                 reject(error)
@@ -1238,7 +1271,9 @@
                                     ...d
                                 }
                                 console.log('LOAN REQUESTS', d)
-                                router.routeTo(location.hash)
+                                if (floGlobals.loaded) {
+                                    router.routeTo(window.location.hash)
+                                }
                                 resolve()
                             }).catch(error => {
                                 reject(error)
@@ -1251,7 +1286,9 @@
                                     ...d
                                 }
                                 console.log('OUTBOX', d)
-                                router.routeTo(location.hash)
+                                if (floGlobals.loaded) {
+                                    router.routeTo(window.location.hash)
+                                }
                                 resolve()
                             }).then(d => {
                                 floGlobals.myOutbox = d;
@@ -1260,6 +1297,19 @@
                                 .catch(error => {
                                     reject(error)
                                 })
+                        }),
+                        new Promise((resolve, reject) => {
+                            floCloudAPI.requestApplicationData('in_process_loan_request', {
+                                callback: (d, e) => {
+                                    console.log('IN PROCESS LOAN REQUEST', d)
+                                    if (e) return
+                                    parseInProcessRequests(d)
+                                    if (floGlobals.loaded) {
+                                        router.routeTo(window.location.hash)
+                                    }
+                                    resolve()
+                                }
+                            })
                         })
                     ]).then(result => {
                         console.log(result)
@@ -1269,6 +1319,7 @@
                         } else {
                             router.routeTo(window.location.hash)
                         }
+                        floGlobals.loaded = true
                     }).catch(error => {
                         console.error(error)
                         notify(error, 'error')
@@ -1284,6 +1335,14 @@
                     }
                 })
             }).catch(error => console.error(error))
+        }
+        function parseInProcessRequests(requests) {
+            if (!floGlobals.inProcessRequests)
+                floGlobals.inProcessRequests = new Set()
+            for (const key in requests) {
+                const { message: { loan_opening_process_id } } = requests[key]
+                floGlobals.inProcessRequests.add(loan_opening_process_id)
+            }
         }
     </script>
 </body>

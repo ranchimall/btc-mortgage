@@ -770,6 +770,8 @@ h3 {
 }
 
 .loan-process {
+  display: grid;
+  gap: 1rem;
   background-color: rgba(var(--foreground-color), 1);
   padding: max(1rem, 1.5vw);
   border-radius: 0.5rem;

@@ -8,7 +8,7 @@
     const BANKER_ID = "F6uMddaTDCZgojENbqRnFo5PCknArE7dKz";
     const BANKER_PUBKEY = '03EE0FB1868EE7D03BC741B10CD56057769445C7D37703115E428A93236C714E61';
 
-    const CURRENCY = "USD";
+    const CURRENCY = "usd";
     const ALLOWED_DEVIATION = 0.98, //ie, upto 2% of decrease in rate can be accepted in processing stage
         WAIT_TIME = 24 * 60 * 60 * 1000;//24 hrs
     const PERIOD_REGEX = /^\d{1,5}(Y|M|D)$/,
@@ -1022,6 +1022,7 @@
     function validate_loan_request(loan_req_id, borrower, coborrower) {
         return new Promise((resolve, reject) => {
             floCloudAPI.requestApplicationData(TYPE_LOAN_REQUEST, { atVectorClock: loan_req_id }).then(loan_req => {
+                console.log(loan_req, loan_req_id, loan_req[loan_req_id]);
                 const { senderID, message: { loan_collateral_req_id, loan_amount, policy_id, collateral }, pubKey } = loan_req[loan_req_id];
                 if (!loan_req[loan_req_id])
                     return reject(RequestValidationError(TYPE_LOAN_REQUEST, "request not found"));
@@ -1063,17 +1064,22 @@
                     //check if loan amount (token) is available to lend
                     let lender_floID = floCrypto.toFloID(lender);
                     floTokenAPI.getBalance(lender_floID, CURRENCY).then(lender_tokenBalance => {
+                        console.log(lender_tokenBalance, loan_amount);
                         if (lender_tokenBalance < loan_amount)
                             return reject("Insufficient tokens to lend");
-                        floCloudAPI.sendApplicationData({
+                        const responseData = {
                             lender, borrower, coborrower,
                             loan_req_id,
                             loan_opening_process_id
-                        }, TYPE_LENDER_RESPONSE, { receiverID: borrower })
+                        }
+                        floCloudAPI.sendApplicationData(responseData, TYPE_LENDER_RESPONSE, { receiverID: borrower })
                             .then(result => {
                                 compactIDB.addData("outbox", result, result.vectorClock);
                                 resolve(result);
                             }).catch(error => reject(error))
+                        floCloudAPI.sendApplicationData({ loan_opening_process_id }, 'in_process_loan_request')
+                            .catch(error => console.log(error))
+
                     }).catch(error => reject(error))
                 }).catch(error => reject(error))
             }).catch(error => reject(error))
@@ -1173,7 +1179,9 @@
     function lockCollateralInBlockchain(privKey, lenderPubKey, collateral_value) {
         return new Promise((resolve, reject) => {
             const locker_id = findLocker(floDapps.user.public, lenderPubKey).address;
-            btcOperator.sendTx(floDapps.user.id, privKey, locker_id, collateral_value)
+            let coborrower_floID = floCrypto.toFloID(floDapps.user.id);
+            let coborrower_btcID = btcOperator.convert.legacy2bech(coborrower_floID);
+            btcOperator.sendTx(coborrower_btcID, privKey, locker_id, collateral_value)
                 .then(txid => resolve(txid))
                 .catch(error => reject(error))
         })
@@ -1239,7 +1247,9 @@
                     let receivers = [borrower, coborrower].map(addr => floCrypto.toFloID(addr));
                     //write loan details in blockchain
                     floBlockchainAPI.writeDataMultiple([privKey], loan_blockchain_data, receivers)
-                        .then(loan_txid => resolve(loan_txid))
+                        .then(loan_txid => {
+                            resolve(loan_txid)
+                        })
                         .catch(error => {
                             compactIDB.writeData("fail_safe", loan_blockchain_data, token_txid); //fail-safe mech if token is transferred but details not added to blockchain. this helps to retry fail-safe
                             reject({ error, fail_safe: token_txid })
