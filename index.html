@@ -971,8 +971,8 @@
                                     My Loans
                                     ${myLoanRequests.length ? html`<span class="badge">${myLoanRequests.length}</span>` : ''}
                                 </sm-chip>
-                                <sm-chip value="loan-requests" selected=${view === 'loan-requests'}>
-                                    Loan requests
+                                <sm-chip value="lend" selected=${view === 'lend'}>
+                                    Lend
                                     ${loanRequests.length ? html`<span class="badge">${loanRequests.length}</span>` : ''}
                                 </sm-chip>
                             </sm-chips>
@@ -993,20 +993,22 @@
                                         </div>
                                     `}
                                 `: ''}
-                                ${view === 'loan-requests' ? html`
+                                ${view === 'lend' ? html`
+                                <div class="grid gap-2 align-center justify-center" style="padding: 2vw 0;">
+                                    <div class="grid">
+                                        <h2>Earn interest on your USD tokens</h2>
+                                        <p>Lend your USD tokens to earn interest assured by BTC collateral.</p>
+                                    </div>
+                                    
+                                </div>
                                     ${loanRequests.length ? html`
                                         <ul id="loan_requests_list">
                                             ${loanRequests.reverse().map(requestId => render.loanRequest(requestId, floGlobals.loanRequests[requestId]))}
                                         </ul>
                                     `: html`
-                                        <div class="grid gap-2 align-center justify-center" style="padding: 2vw 0;">
-                                            <div class="grid gap-0-5">
-                                                <h1>Earn interest on your USD tokens</h1>
-                                                <p>Lend your USD tokens to earn interest assured by BTC collateral.</p>
-                                            </div>
-                                            <strong>
-                                                Borrower loan requests will appear here
-                                            </strong>
+                                        <strong>
+                                            Loan requests will appear here
+                                        </strong>
                                     `}
                                 `: ''}
                             </div>

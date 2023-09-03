@@ -826,7 +826,7 @@ h3 {
   }
 }
 
-@media screen and (min-width: 64rem) {
+@media screen and (min-width: 40rem) {
   h1 {
     font-size: 3vw;
   }
@@ -836,6 +836,11 @@ h3 {
   .popup__header {
     padding: 1.5rem 1.5rem 0 0.75rem;
   }
+  #request_loan_popup {
+    --width: 32rem;
+  }
+}
+@media screen and (min-width: 46rem) {
   #main_page {
     grid-template-columns: 18rem 1fr;
     & > :first-child {
@@ -843,9 +848,6 @@ h3 {
       top: 1rem;
       overflow-y: auto;
     }
-  }
-  #request_loan_popup {
-    --width: 32rem;
   }
 }
 @media (any-hover: hover) {
