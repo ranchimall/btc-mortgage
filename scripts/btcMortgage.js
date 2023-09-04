@@ -308,7 +308,7 @@
 
     function validateAndStoreLoanFailDetails(t) {
         return new Promise((resolve, reject) => {
-            if (!t.senders.has(BANKER_ID)) //Data not authorised by banker, abort
+            if (!t.senders.has(BANKER_ID)) //Data not authorized by banker, abort
                 return resolve(null);
             let failure_details = parseLoanFailData(t.data, t.txid, t.time);
             compactIDB.readData("loans", failure_details.loan_id).then(loan_details => {
@@ -1077,9 +1077,6 @@
                                 compactIDB.addData("outbox", result, result.vectorClock);
                                 resolve(result);
                             }).catch(error => reject(error))
-                        floCloudAPI.sendApplicationData({ loan_opening_process_id }, 'in_process_loan_request')
-                            .catch(error => console.log(error))
-
                     }).catch(error => reject(error))
                 }).catch(error => reject(error))
             }).catch(error => reject(error))
@@ -1420,13 +1417,14 @@
             const coborrower = floDapps.user.id;
             let coborrower_pubKey = floDapps.user.public;
             validate_collateralLock_ack(collateral_lock_ack_id, borrower, coborrower, lender).then(result => {
-                let { lender_pubKey, collateral_lock_id } = result;
+                let { lender_pubKey, collateral_lock_id, loan_opening_process_id } = result;
                 let locker = findLocker(coborrower_pubKey, lender_pubKey)
                 //create the tx hex and sign it
                 createUnlockCollateralTxHex(locker, collateral_lock_id, privKey).then(unlock_tx_hex => {
                     floCloudAPI.sendApplicationData({
                         borrower, coborrower, lender,
-                        collateral_lock_ack_id, unlock_tx_hex
+                        collateral_lock_ack_id, unlock_tx_hex,
+                        loan_opening_process_id
                     }, TYPE_REFUND_COLLATERAL_REQUEST)
                         .then(result => {
                             compactIDB.addData("outbox", result, result.vectorClock);
@@ -1845,5 +1843,6 @@
 
     btcMortgage.policies = POLICIES;
     btcMortgage.loans = LOANS;
+    btcMortgage.banker.id = BANKER_ID;
 
 })(window.btcMortgage = {})

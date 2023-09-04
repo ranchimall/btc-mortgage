@@ -410,9 +410,9 @@
                 currency,
                 maximumFractionDigits: currency === 'usd' ? 2 : 8,
                 currencyDisplay: 'code'
-            }).slice(3)
+            }).slice(4)
             if (currency === 'usd')
-                return `$${formattedAmount}`
+                return `$ ${formattedAmount}`
             else
                 return `${formattedAmount} ${currency.toUpperCase()}`
         }
@@ -550,6 +550,7 @@
             loanRequest(requestId, details) {
                 const { message: { borrower, coborrower, collateral: { btc_id, quantity, rate }, loan_amount, loan_collateral_req_id, loan_opening_process_id, policy_id }, vectorClock } = details;
                 const { duration, interest } = btcMortgage.policies[policy_id];
+                const isRequester = floCrypto.isSameAddr(borrower, floGlobals.myFloID) || floCrypto.isSameAddr(coborrower, floGlobals.myFloID)
                 const [isLending, setIsLending] = useState(false)
                 async function startLendingProcess() {
                     const confirmation = await getConfirmation('Start lending process?', { message: `You'll be participating in loan lending. Continue?`, confirmText: 'Continue', cancelText: 'Cancel' })
@@ -557,6 +558,8 @@
                         return;
                     setIsLending(true)
                     btcMortgage.respondLoan(vectorClock, borrower, coborrower).then(() => {
+                        floCloudAPI.sendApplicationData({ loan_opening_process_id }, 'in_process_loan_request')
+                            .catch(error => console.log(error))
                         notify('Lending process started successfully.', 'success')
                         router.routeTo(location.hash)
                     }).catch(err => {
@@ -569,7 +572,7 @@
                 return html`
                     <li class="loan-request">
                         ${loan_opening_process_id ? html`
-                            <p>Loan request: ${loan_opening_process_id}</p>    
+                            <p>${isRequester ? 'Your loan' : 'Loan'} request: ${loan_opening_process_id}</p>    
                         `: ''} 
                         <div class="flex flex-wrap align-items-start gap-1-5">
                             <div class="grid gap-0-3">
@@ -611,14 +614,16 @@
                                 `: ''}
                             </div>
                         </details>
-                        <button class="button button--primary margin-left-auto" onclick=${startLendingProcess} disabled=${isLending}>
-                            ${isLending ? html`
-                                Starting lending process
-                                <sm-spinner class="margin-left-0-5"></sm-spinner>
-                            `: html`
-                                Start lending
-                            `}    
-                        </button>
+                        ${!isRequester ? html`
+                            <button class="button button--primary margin-left-auto" onclick=${startLendingProcess} disabled=${isLending}>
+                                ${isLending ? html`
+                                    Starting lending process
+                                    <sm-spinner class="margin-left-0-5"></sm-spinner>
+                                `: html`
+                                    Start lending
+                                `}    
+                            </button>
+                        `: html``}
                 `
             },
             loanProcess(details = {}) {
@@ -626,10 +631,9 @@
                     loanOpeningProcessID,
                     borrower, isBorrower, coborrower, isCoborrower, lender, isLender, loanAmount, policyID,
                     initiationTime, loanRequestTime, loanResponseTime, collateralLockAckTime,
-                    hasProvidedCollateral, hasAgreedToLend, hasRequestedCollateralLock, hasLockedCollateral, hasIssuedLoan,
+                    hasProvidedCollateral, hasAgreedToLend, hasRequestedCollateralLock, hasLockedCollateral, hasIssuedLoan, hasRequestedCollateralRefund,
                     collateralRequestID, loanRequestID, loanResponseID, collateralLockRequestID, collateralLockAckID
                 } = details
-                console.log(details)
                 return Component(() => {
                     const [verifyingCollateral, setVerifyCollateral] = useState(false)
                     let collateralAmount = 0
@@ -668,7 +672,6 @@
                             setLockingCollateral(false)
                         }
                     }
-                    // TODO: UI for coborrower to request collateral lock
                     async function requestCollateralLock() {
                         btcMortgage.requestCollateralLock(loanResponseID, coborrower, lender, await floDapps.user.private).then(() => {
                             notify('Collateral lock request sent successfully', 'success')
@@ -685,6 +688,33 @@
                             notify('Loan issued successfully', 'success')
                         } catch (err) {
                             notify(err, 'error')
+                        }
+                    }
+
+                    // check if loan hasn't been issued even after 24 hours of collateral lock
+                    let hasLockedCollateralForMoreThan24Hours = false
+                    useEffect(() => {
+                        if (isCoborrower && hasLockedCollateral && !hasIssuedLoan) {
+                            const currentTime = new Date().getTime()
+                            const timeDiff = currentTime - collateralLockAckTime
+                            if (timeDiff > 86400000) {
+                                hasLockedCollateralForMoreThan24Hours = true
+                            }
+                        }
+                    }, [hasLockedCollateral, hasIssuedLoan])
+                    const [requestingCollateralRefund, setRequestingCollateralRefund] = useState(false)
+                    async function requestCollateralRefund() {
+                        const confirmation = await getConfirmation('Request collateral refund?', { message: `You are about to request for collateral refund. Continue?`, confirmText: 'Request', cancelText: 'Cancel' })
+                        if (!confirmation)
+                            return;
+                        try {
+                            setRequestingCollateralRefund(true)
+                            await btcMortgage.requestBanker.refundCollateral(collateralLockAckID, borrower, lender, await floDapps.user.private)
+                            notify('Collateral refund requested successfully', 'success')
+                        } catch (err) {
+                            notify(err, 'error')
+                        } finally {
+                            setRequestingCollateralRefund(false)
                         }
                     }
 
@@ -743,9 +773,25 @@
                                 <div class="details">
                                     ${hasLockedCollateral ? html`
                                         <h4>Collateral locked</h4>
+                                        ${hasLockedCollateralForMoreThan24Hours && !hasRequestedCollateralRefund ? html`
+                                            <p>
+                                                Loan has not been issued even after 24 hours of collateral lock.
+                                                You can request for collateral refund. 
+                                            </p>    
+                                            <button class="button button--primary margin-right-auto" disabled=${requestCollateralRefund} onclick=${requestCollateralRefund}>
+                                                ${requestingCollateralRefund ? html`
+                                                    Requesting collateral refund
+                                                    <sm-spinner class="margin-left-0-5"></sm-spinner>
+                                                `: html`
+                                                    Request collateral refund
+                                                `}
+                                            </button>
+                                        `: html`
+                                            <p>Collateral refund requested. It'll be refunded within 24 hrs.</p>
+                                        `}
                                     `: html`
                                         <h4>Waiting for collateral to be locked</h4>
-                                        <p>Loan borrower needs to lock collateral before loan can be issued.</p>
+                                        <p>${isCoborrower ? 'You need' : 'Loan co-borrower needs'} to lock collateral before loan can be issued.</p>
                                         ${hasAgreedToLend && (isBorrower || isCoborrower) ? html`
                                             ${floCrypto.isSameAddr(borrower, coborrower) ? html`
                                                 <button class="button button--primary margin-right-auto" disabled=${lockingCollateral} onclick=${lockCollateral}>
@@ -974,8 +1020,6 @@
                     for (const key in floGlobals.loanRequests) {
                         const { message: { borrower, coborrower, loan_opening_process_id } } = floGlobals.loanRequests[key]
                         if (!loan_opening_process_id) continue // TODO: remove this check after all requests are updated
-                        if (floCrypto.isSameAddr(borrower, floGlobals.myFloID) || floCrypto.isSameAddr(coborrower, floGlobals.myFloID))
-                            continue // if user is borrower or coborrower, don't show loan request
                         if (floGlobals.inProcessRequests.has(loan_opening_process_id)) continue // if loan request is in process, don't show loan request
                         loanRequests.push(key)
                     }
@@ -1204,6 +1248,11 @@
                         loansInProcess[loan_opening_process_id].hasLockedCollateral = true
                         loansInProcess[loan_opening_process_id].collateralLockAckID = key
                         break;
+                    case 'type_refund_collateral_request':
+                        loansInProcess[loan_opening_process_id].refundCollateralRequestTime = time
+                        loansInProcess[loan_opening_process_id].refundCollateralRequestID = key
+                        loansInProcess[loan_opening_process_id].hasRequestedCollateralRefund = true
+                        break;
                 }
             }
             // sort by time
@@ -1320,12 +1369,13 @@
                     console.info(result)
                     Promise.allSettled([
                         new Promise((resolve, reject) => {
-                            btcMortgage.viewMyInbox(d => {
+                            btcMortgage.viewMyInbox((d, e) => {
+                                if (e) return
                                 floGlobals.myInbox = {
                                     ...floGlobals.myInbox,
                                     ...d
                                 }
-                                console.log('INBOX', d)
+                                console.log('MY INBOX', d)
                                 if (floGlobals.loaded) {
                                     router.routeTo(window.location.hash)
                                 }
@@ -1335,7 +1385,8 @@
                             })
                         }),
                         new Promise((resolve, reject) => {
-                            btcMortgage.listLoanRequests(d => {
+                            btcMortgage.listLoanRequests((d, e) => {
+                                if (e) return
                                 floGlobals.loanRequests = {
                                     ...floGlobals.loanRequests,
                                     ...d
@@ -1350,19 +1401,22 @@
                             })
                         }),
                         new Promise((resolve, reject) => {
-                            btcMortgage.viewMyOutbox(d => {
+                            btcMortgage.viewMyOutbox((d, e) => {
+                                if (e) return
                                 floGlobals.myOutbox = {
-                                    ...floGlobals.myOutbox,
+                                    ...floGlobals.myOutbox || {},
                                     ...d
                                 }
-                                console.log('OUTBOX', d)
+                                console.log('MY OUTBOX', d)
                                 if (floGlobals.loaded) {
                                     router.routeTo(window.location.hash)
                                 }
                                 resolve()
                             }).then(d => {
-                                floGlobals.myOutbox = d;
-                                console.log('OUTBOX', d)
+                                floGlobals.myOutbox = {
+                                    ...floGlobals.myOutbox || {},
+                                    ...d
+                                }
                             })
                                 .catch(error => {
                                     reject(error)
@@ -1371,9 +1425,9 @@
                         new Promise((resolve, reject) => {
                             floCloudAPI.requestApplicationData('in_process_loan_request', {
                                 callback: (d, e) => {
-                                    console.log('IN PROCESS LOAN REQUEST', d)
                                     if (e) return
                                     parseInProcessRequests(d)
+                                    console.log('IN PROCESS LOAN REQUEST', d)
                                     if (floGlobals.loaded) {
                                         router.routeTo(window.location.hash)
                                     }
