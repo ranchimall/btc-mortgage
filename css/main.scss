@@ -163,8 +163,11 @@ details summary {
   user-select: none;
   cursor: pointer;
   align-items: center;
-  justify-content: space-between;
+  gap: 0.5rem;
   color: var(--accent-color);
+  .down-arrow {
+    fill: var(--accent-color);
+  }
 }
 
 details[open] {
@@ -665,12 +668,13 @@ h3 {
 }
 #balance_list {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   justify-items: flex-start;
   gap: 0.5rem;
 }
 .balance-card {
   display: flex;
+  flex: 1 1 12rem;
   justify-content: space-between;
   padding: 0.7rem;
   border-radius: 0.5rem;
@@ -801,16 +805,23 @@ h3 {
 #loan_requests_list {
   display: grid;
   gap: 1rem;
+  align-items: flex-start;
   grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
 }
 .loan-request {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  justify-items: flex-start;
   gap: 1.5rem;
   background-color: rgba(var(--foreground-color), 1);
   padding: 1rem;
+  border-radius: 0.5rem;
   b {
     font-weight: 500;
     color: rgba(var(--text-color), 0.9);
+  }
+  .button {
+    margin-top: auto;
   }
 }
 @media screen and (max-width: 40rem) {

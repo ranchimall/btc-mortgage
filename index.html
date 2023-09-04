@@ -404,7 +404,17 @@
             }
             if (!amount)
                 return '0';
-            return amount.toLocaleString(currency === 'inr' ? `en-IN` : 'en-US', { style: 'currency', currency, maximumFractionDigits: currency === 'usd' ? 2 : 8 })
+
+            const formattedAmount = amount.toLocaleString(currency === 'inr' ? `en-IN` : 'en-US', {
+                style: 'currency',
+                currency,
+                maximumFractionDigits: currency === 'usd' ? 2 : 8,
+                currencyDisplay: 'code'
+            }).slice(3)
+            if (currency === 'usd')
+                return `$${formattedAmount}`
+            else
+                return `${formattedAmount} ${currency.toUpperCase()}`
         }
         const render = {
             policy(policyId, details = {}) {
@@ -538,7 +548,7 @@
                 `
             },
             loanRequest(requestId, details) {
-                const { message: { borrower, coborrower, collateral: { btc_id, quantity, rate }, loan_amount, loan_collateral_req_id, policy_id }, vectorClock } = details;
+                const { message: { borrower, coborrower, collateral: { btc_id, quantity, rate }, loan_amount, loan_collateral_req_id, loan_opening_process_id, policy_id }, vectorClock } = details;
                 const { duration, interest } = btcMortgage.policies[policy_id];
                 const [isLending, setIsLending] = useState(false)
                 async function startLendingProcess() {
@@ -558,22 +568,9 @@
                 }
                 return html`
                     <li class="loan-request">
-                        <div class="grid gap-1-5 flex-1 w-100">
-                            <div class="grid gap-0-3">
-                                <p>Borrower</p>
-                                <sm-copy value=${getBtcAddress(borrower)}>
-                                    <b>${getBtcAddress(borrower)}</b>
-                                </sm-copy>
-                            </div>
-                            ${floCrypto.isSameAddr(borrower, coborrower) ? html`
-                                <div class="grid gap-0-3">
-                                    <p>Collateral provider</p>
-                                    <sm-copy value=${getBtcAddress(coborrower)}>
-                                        <b>${getBtcAddress(coborrower)}</b>
-                                    </sm-copy>
-                                </div>
-                            `: ''}
-                        </div>
+                        ${loan_opening_process_id ? html`
+                            <p>Loan request: ${loan_opening_process_id}</p>    
+                        `: ''} 
                         <div class="flex flex-wrap align-items-start gap-1-5">
                             <div class="grid gap-0-3">
                                 <p>Loan amount</p>
@@ -592,22 +589,42 @@
                                 <b>${interest * 100}% p.a</b>
                             </div>
                         </div>
-                        <div class="flex gap-0-5 align-center margin-left-auto">
-                            <button class="button button--primary" onclick=${startLendingProcess} disabled=${isLending}>
-                                ${isLending ? html`
-                                    Starting lending process
-                                    <sm-spinner class="margin-left-0-5"></sm-spinner>
-                                `: html`
-                                    Start lending
-                                `}    
-                            </button>
-                        </div>
+                        <details>
+                            <summary>
+                                Borrower details
+                                <svg class="icon down-arrow" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><path d="M24 24H0V0h24v24z" fill="none" opacity=".87"></path><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6-1.41-1.41z"></path></svg>
+                            </summary>
+                            <div class="grid gap-1-5">
+                                <div class="grid gap-0-3">
+                                    <p>Borrower</p>
+                                    <sm-copy value=${getBtcAddress(borrower)}>
+                                        <b>${getBtcAddress(borrower)}</b>
+                                    </sm-copy>
+                                </div>
+                                ${floCrypto.isSameAddr(borrower, coborrower) ? html`
+                                    <div class="grid gap-0-3">
+                                        <p>Collateral provider</p>
+                                        <sm-copy value=${getBtcAddress(coborrower)}>
+                                            <b>${getBtcAddress(coborrower)}</b>
+                                        </sm-copy>
+                                    </div>
+                                `: ''}
+                            </div>
+                        </details>
+                        <button class="button button--primary margin-left-auto" onclick=${startLendingProcess} disabled=${isLending}>
+                            ${isLending ? html`
+                                Starting lending process
+                                <sm-spinner class="margin-left-0-5"></sm-spinner>
+                            `: html`
+                                Start lending
+                            `}    
+                        </button>
                 `
             },
             loanProcess(details = {}) {
                 const {
                     loanOpeningProcessID,
-                    borrower, coborrower, lender, isLender, loanAmount, policyID,
+                    borrower, isBorrower, coborrower, isCoborrower, lender, isLender, loanAmount, policyID,
                     initiationTime, loanRequestTime, loanResponseTime, collateralLockAckTime,
                     hasProvidedCollateral, hasAgreedToLend, hasRequestedCollateralLock, hasLockedCollateral, hasIssuedLoan,
                     collateralRequestID, loanRequestID, loanResponseID, collateralLockRequestID, collateralLockAckID
@@ -686,7 +703,7 @@
                                         ${hasProvidedCollateral ? html`
                                             <time>${getFormattedTime(initiationTime)}</time>
                                         `: html`
-                                            ${floCrypto.isSameAddr(coborrower, floDapps.user.id) ? html`
+                                            ${isCoborrower ? html`
                                             <p>Verify that you have <b>${formatAmount(collateralAmount)}</b> as collateral</p>
                                                 <button class="button button--primary margin-right-auto" disabled=${verifyingCollateral} onclick=${verifyCollateral}>
                                                     ${verifyingCollateral ? html`
@@ -728,7 +745,8 @@
                                         <h4>Collateral locked</h4>
                                     `: html`
                                         <h4>Waiting for collateral to be locked</h4>
-                                        ${hasAgreedToLend && (floCrypto.isSameAddr(borrower, floDapps.user.id) || floCrypto.isSameAddr(coborrower, floDapps.user.id)) ? html`
+                                        <p>Loan borrower needs to lock collateral before loan can be issued.</p>
+                                        ${hasAgreedToLend && (isBorrower || isCoborrower) ? html`
                                             ${floCrypto.isSameAddr(borrower, coborrower) ? html`
                                                 <button class="button button--primary margin-right-auto" disabled=${lockingCollateral} onclick=${lockCollateral}>
                                                     ${lockingCollateral ? html`
@@ -753,7 +771,7 @@
                                     ${hasIssuedLoan ? html`
                                         <h4>Loan issued</h4>
                                     `: html`
-                                        ${hasLockedCollateral && floCrypto.isSameAddr(lender, floDapps.user.id) ? html`
+                                        ${hasLockedCollateral && isLender ? html`
                                             <button class="button button--primary margin-right-auto" disabled=${isIssuingLoan} onclick=${issueLoan}>
                                                 ${isIssuingLoan ? html`
                                                     Issuing loan
@@ -950,37 +968,61 @@
             } else {
                 // user homepage
                 const inbox = Component(() => {
-                    const myLoanRequests = groupLoanProcess()
+                    const { borrowed, coborrowed, lent } = groupLoanProcess()
                     const [view, setView] = useState(section)
                     let loanRequests = [];
                     for (const key in floGlobals.loanRequests) {
                         const { message: { borrower, coborrower, loan_opening_process_id } } = floGlobals.loanRequests[key]
+                        if (!loan_opening_process_id) continue // TODO: remove this check after all requests are updated
                         if (floCrypto.isSameAddr(borrower, floGlobals.myFloID) || floCrypto.isSameAddr(coborrower, floGlobals.myFloID))
-                            continue
-                        if (floGlobals.inProcessRequests.has(loan_opening_process_id)) continue
+                            continue // if user is borrower or coborrower, don't show loan request
+                        if (floGlobals.inProcessRequests.has(loan_opening_process_id)) continue // if loan request is in process, don't show loan request
                         loanRequests.push(key)
                     }
                     function handleChange(e) {
                         history.pushState(null, null, `#/home/${e.target.value}`)
                         setView(e.target.value)
                     }
+                    if (
+                        coborrowed.length === 0 && view === 'coborrowed'
+                        || lent.length === 0 && view === 'lent'
+                        || loanRequests.length === 0 && view === 'lend'
+                    ) {
+                        // if no loans in coborrowed or lent or loan requests, redirect to my-loans
+                        history.replaceState(null, null, `#/home/my-loans`)
+                        setView('my-loans')
+                    }
                     return html`
                         <section class="grid gap-1">
                             <sm-chips onchange=${handleChange}>
                                 <sm-chip value="my-loans" selected=${view === 'my-loans'}>
                                     My Loans
-                                    ${myLoanRequests.length ? html`<span class="badge">${myLoanRequests.length}</span>` : ''}
+                                    ${borrowed.length ? html`<span class="badge">${borrowed.length}</span>` : ''}
                                 </sm-chip>
-                                <sm-chip value="lend" selected=${view === 'lend'}>
-                                    Lend
-                                    ${loanRequests.length ? html`<span class="badge">${loanRequests.length}</span>` : ''}
-                                </sm-chip>
+                                ${coborrowed.length ? html`
+                                    <sm-chip value="coborrowed" selected=${view === 'coborrowed'}>
+                                        Coborrowed
+                                        <span class="badge">${coborrowed.length}</span>
+                                    </sm-chip>
+                                ` : ''}
+                                ${lent.length ? html`
+                                    <sm-chip value="lent" selected=${view === 'lent'}>
+                                        Lent
+                                        <span class="badge">${lent.length}</span>
+                                    </sm-chip>
+                                ` : ''}
+                                ${loanRequests.length ? html`
+                                    <sm-chip value="lend" selected=${view === 'lend'}>
+                                        Lend
+                                        <span class="badge">${loanRequests.length}</span>
+                                    </sm-chip>
+                                `: ''}
                             </sm-chips>
                             <div class="grid gap-1">
                                 ${view === 'my-loans' ? html`
-                                ${myLoanRequests.length ? html`
+                                    ${borrowed.length ? html`
                                         <ul class="grid gap-1">
-                                            ${myLoanRequests.map(loan => render.loanProcess(loan))}
+                                            ${borrowed.map(loan => render.loanProcess(loan))}
                                         </ul> 
                                         <a href="#/apply-loan" class="button button--primary margin-right-auto">Apply for a new loan</a>
                                     `: html`
@@ -993,6 +1035,16 @@
                                         </div>
                                     `}
                                 `: ''}
+                                ${view === 'coborrowed' && coborrowed.length ? html`
+                                    <ul class="grid gap-1">
+                                        ${coborrowed.map(loan => render.loanProcess(loan))}
+                                    </ul> 
+                                `: html``}
+                                ${view === 'lent' && lent.length ? html`
+                                    <ul class="grid gap-1">
+                                        ${lent.map(loan => render.loanProcess(loan))}
+                                    </ul> 
+                                `: html``}
                                 ${view === 'lend' ? html`
                                 <div class="grid gap-2 align-center justify-center" style="padding: 2vw 0;">
                                     <div class="grid">
@@ -1111,10 +1163,14 @@
                         hasLockedCollateral: false,
                     }
                 }
-                if (borrower)
+                if (borrower) {
                     loansInProcess[loan_opening_process_id].borrower = borrower
-                if (coborrower)
+                    loansInProcess[loan_opening_process_id].isBorrower = floCrypto.isSameAddr(borrower, floDapps.user.id)
+                }
+                if (coborrower) {
                     loansInProcess[loan_opening_process_id].coborrower = coborrower
+                    loansInProcess[loan_opening_process_id].isCoborrower = floCrypto.isSameAddr(coborrower, floDapps.user.id)
+                }
                 if (loan_amount)
                     loansInProcess[loan_opening_process_id].loanAmount = loan_amount
                 if (policy_id)
@@ -1151,10 +1207,22 @@
                 }
             }
             // sort by time
-            const sortedLoansInProcess = Object.values(loansInProcess).sort((a, b) => {
-                return b.initiationTime - a.initiationTime
+            return Object.values(loansInProcess).sort((a, b) => {
+                return (b.initiationTime || b.loanResponseTime) - (a.initiationTime || a.loanResponseTime)
             })
-            return sortedLoansInProcess
+                .reduce((acc, loan) => { // group by borrower, coborrower and lender
+                    if (loan.isBorrower)
+                        acc.borrowed.push(loan)
+                    else if (loan.isCoborrower)
+                        acc.coborrowed.push(loan)
+                    else if (loan.isLender)
+                        acc.lent.push(loan)
+                    return acc
+                }, {
+                    borrowed: [],
+                    coborrowed: [],
+                    lent: []
+                })
         }
 
         router.addRoute('apply-loan', async () => {
