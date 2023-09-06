@@ -668,6 +668,7 @@
                             }
                             await btcMortgage.lockCollateral(collateralLockID, borrower, lender, await floDapps.user.private)
                             notify('Collateral locked successfully', 'success')
+                            await btcMortgage.readOutbox()
                             router.routeTo(location.hash)
                         } catch (err) {
                             notify(err, 'error')
@@ -697,8 +698,8 @@
                     let hasLockedCollateralForMoreThan24Hours = false
                     useEffect(() => {
                         if (isCoborrower && hasLockedCollateral && !hasIssuedLoan) {
-                            const currentTime = new Date().getTime()
-                            const timeDiff = currentTime - collateralLockAckTime
+                            const timeDiff = Date.now() - collateralLockAckTime
+                            console.log(timeDiff)
                             if (timeDiff > 86400000) {
                                 hasLockedCollateralForMoreThan24Hours = true
                             }
@@ -775,21 +776,25 @@
                                 <div class="details">
                                     ${hasLockedCollateral ? html`
                                         <h4>Collateral locked</h4>
-                                        ${hasLockedCollateralForMoreThan24Hours && !hasRequestedCollateralRefund ? html`
-                                            <p>
-                                                Loan has not been issued even after 24 hours of collateral lock.
-                                                You can request for collateral refund. 
-                                            </p>    
-                                            <button class="button button--primary margin-right-auto" disabled=${requestCollateralRefund} onclick=${requestCollateralRefund}>
-                                                ${requestingCollateralRefund ? html`
-                                                    Requesting collateral refund
-                                                    <sm-spinner class="margin-left-0-5"></sm-spinner>
-                                                `: html`
-                                                    Request collateral refund
-                                                `}
-                                            </button>
+                                        ${hasLockedCollateralForMoreThan24Hours ? html`
+                                            ${hasRequestedCollateralRefund ? html`
+                                                <p>Collateral refund requested. It'll be refunded within 24 hrs.</p>
+                                            `: html`
+                                                <p>
+                                                    Loan has not been issued even after 24 hours of collateral lock.
+                                                    You can request for collateral refund. 
+                                                </p>    
+                                                <button class="button button--primary margin-right-auto" disabled=${requestCollateralRefund} onclick=${requestCollateralRefund}>
+                                                    ${requestingCollateralRefund ? html`
+                                                        Requesting collateral refund
+                                                        <sm-spinner class="margin-left-0-5"></sm-spinner>
+                                                    `: html`
+                                                        Request collateral refund
+                                                    `}
+                                                </button>
+                                            `}
                                         `: html`
-                                            <p>Collateral refund requested. It'll be refunded within 24 hrs.</p>
+                                            <time>${getFormattedTime(collateralLockAckTime)}</time>
                                         `}
                                     `: html`
                                         <h4>Waiting for collateral to be locked</h4>

@@ -915,6 +915,17 @@
         })
     }
 
+    btcMortgage.readOutbox = () => new Promise((resolve, reject) => {
+        compactIDB.readAllData("outbox")
+            .then(result => {
+                for (const key in result) {
+                    result[key].message = floCloudAPI.util.decodeMessage(result[key].message);
+                }
+                resolve(result);
+            })
+            .catch(error => reject(error))
+    })
+
     btcMortgage.viewMyOutbox = (callback = undefined) => { //view all inbox
         return new Promise((resolve, reject) => {
             let options = { senderID: floDapps.user.id }
@@ -922,13 +933,7 @@
                 options.callback = callback;
             floCloudAPI.requestApplicationData(null, options)
                 .then(_ => {
-                    compactIDB.readAllData("outbox")
-                        .then(result => {
-                            for (const key in result) {
-                                result[key].message = floCloudAPI.util.decodeMessage(result[key].message);
-                            }
-                            resolve(result);
-                        })
+                    btcMortgage.readOutbox().then(result => resolve(result))
                         .catch(error => reject(error))
                 })
                 .catch(error => {
