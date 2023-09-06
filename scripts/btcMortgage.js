@@ -9,7 +9,7 @@
     // const BANKER_ID = "FPFeL5PXzW9bGosUjQYCxTHSMHidnygvvd";
     const BANKER_PUBKEY = '03EE0FB1868EE7D03BC741B10CD56057769445C7D37703115E428A93236C714E61';
 
-    const CURRENCY = "usd";
+    const CURRENCY = "rupee";
     const ALLOWED_DEVIATION = 0.98, //ie, upto 2% of decrease in rate can be accepted in processing stage
         WAIT_TIME = 24 * 60 * 60 * 1000;//24 hrs
     const PERIOD_REGEX = /^\d{1,5}(Y|M|D)$/,
@@ -915,33 +915,6 @@
         })
     }
 
-    btcMortgage.readOutbox = () => new Promise((resolve, reject) => {
-        compactIDB.readAllData("outbox")
-            .then(result => {
-                for (const key in result) {
-                    result[key].message = floCloudAPI.util.decodeMessage(result[key].message);
-                }
-                resolve(result);
-            })
-            .catch(error => reject(error))
-    })
-
-    btcMortgage.viewMyOutbox = (callback = undefined) => { //view all inbox
-        return new Promise((resolve, reject) => {
-            let options = { senderID: floDapps.user.id }
-            if (callback instanceof Function)
-                options.callback = callback;
-            floCloudAPI.requestApplicationData(null, options)
-                .then(_ => {
-                    btcMortgage.readOutbox().then(result => resolve(result))
-                        .catch(error => reject(error))
-                })
-                .catch(error => {
-                    console.log(error);
-                })
-        })
-    }
-
     /*Loan Opening*/
 
     //1. B: requests collateral from coborrower
@@ -1073,12 +1046,12 @@
                         console.log(lender_tokenBalance, loan_amount);
                         if (lender_tokenBalance < loan_amount)
                             return reject("Insufficient tokens to lend");
-                        const responseData = {
+                        floCloudAPI.sendApplicationData({
                             lender, borrower, coborrower,
+                            loan_amount, collateral,
                             loan_req_id,
                             loan_opening_process_id
-                        }
-                        floCloudAPI.sendApplicationData(responseData, TYPE_LENDER_RESPONSE, { receiverID: borrower })
+                        }, TYPE_LENDER_RESPONSE, { receiverID: borrower })
                             .then(result => {
                                 compactIDB.addData("outbox", result, result.vectorClock);
                                 resolve(result);
