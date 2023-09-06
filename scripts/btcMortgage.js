@@ -6,6 +6,7 @@
     const APP_NAME = "BTCMortgage";
     const APP_IDENTIFIER = "BTC Mortgage";
     const BANKER_ID = "F6uMddaTDCZgojENbqRnFo5PCknArE7dKz";
+    // const BANKER_ID = "FPFeL5PXzW9bGosUjQYCxTHSMHidnygvvd";
     const BANKER_PUBKEY = '03EE0FB1868EE7D03BC741B10CD56057769445C7D37703115E428A93236C714E61';
 
     const CURRENCY = "usd";

@@ -559,9 +559,11 @@
                     setIsLending(true)
                     btcMortgage.respondLoan(vectorClock, borrower, coborrower).then(() => {
                         floCloudAPI.sendApplicationData({ loan_opening_process_id }, 'in_process_loan_request')
+                            .then(() => {
+                                notify('Lending process started successfully.', 'success')
+                                router.routeTo(location.hash)
+                            })
                             .catch(error => console.log(error))
-                        notify('Lending process started successfully.', 'success')
-                        router.routeTo(location.hash)
                     }).catch(err => {
                         console.error(err)
                         notify('There was error starting lending process. please try again after some time.', 'error')
@@ -999,17 +1001,106 @@
         let userAddressTimeInterval;
         function renderHome(appState) {
             const { lastPage, page, params: { } = {}, wildcards: [section = 'my-loans'] = [] } = appState || {};
-            if (floGlobals.isSubAdmin) {
+            const balanceCard = Component(() => {
+                const [btcBalance, setBtcBalance] = useState(floGlobals.memoBalance['BTC'])
+                const [floBalance, setFloBalance] = useState(floGlobals.memoBalance['FLO'])
+                const [usdBalance, setUsdBalance] = useState(floGlobals.memoBalance['USD'])
+                const [isRefreshing, setIsRefreshing] = useState(false)
+                function fetchBalance() {
+                    setIsRefreshing(true)
+                    Promise.allSettled([
+                        btcOperator.getBalance(floGlobals.myBtcID),
+                        floBlockchainAPI.getBalance(floGlobals.myFloID),
+                        floTokenAPI.getBalance(floGlobals.myFloID, 'usd')
+                    ]).then(result => {
+                        const [btcBalance, floBalance, usdBalance] = result.map(({ value }) => value)
+                        floGlobals.memoBalance = {
+                            'FLO': floBalance,
+                            'BTC': btcBalance,
+                            'USD': usdBalance
+                        }
+                        setBtcBalance(btcBalance)
+                        setFloBalance(floBalance)
+                        setUsdBalance(usdBalance)
+                    }).catch(error => {
+                        console.error(error)
+                    }).finally(() => {
+                        setIsRefreshing(false)
+                    })
+                }
+                useEffect(() => {
+                    if (lastPage !== page)
+                        fetchBalance()
+                }, [])
+                return html`
+                    <div class="grid gap-1-5">
+                        <div class="flex align-center space-between gap-1">
+                            <h4>My balances</h4>
+                            <button class="button button--colored button--small" disabled=${isRefreshing} onclick=${fetchBalance}>
+                                ${isRefreshing ? html`
+                                    Refreshing <sm-spinner class="margin-left-0-5"></sm-spinner>
+                                `: html`
+                                    Refresh        
+                                `}
+                            </button>
+                        </div>
+                        <ul id="balance_list">
+                            <li class="balance-card">
+                                <span>BTC</span>
+                                <span>${formatAmount(btcBalance)}</span>
+                            </li>
+                            <li class="balance-card">
+                                <span>FLO</span>
+                                <span>${formatAmount(floBalance, 'FLO')}</span>
+                            </li>
+                            <li class="balance-card">
+                                <span>USD</span>
+                                <span>${formatAmount(usdBalance, 'usd')}</span>
+                            </li>
+                        </ul>
+                    </div>
+                `
+            })
+            if (floCrypto.isSameAddr(btcMortgage.banker.id, floDapps.user.id)) {
+                const bankerInbox = Component(() => {
+                    const requests = Object.entries(floGlobals.bankerRequests || {}).map(([requestId, requestDetails]) => {
+                        switch (requestDetails.type) {
+                            case 'type_unlock_collateral_request':
+
+                                break;
+                            case 'type_refund_collateral_request':
+
+                                break;
+                            case 'type_liquate_collateral_request':
+
+                                break;
+                            case 'type_preliquate_collateral_request':
+
+                                break;
+                            default:
+                                return html``
+                        }
+                    })
+                    return html`
+                        <section class="grid gap-1">
+                            <h3>Banker Inbox</h3>
+                            ${requests.length ? html`
+                                <ul id="banker_inbox_list">
+                                    ${requests}
+                                </ul>
+                            `: html`
+                                <strong>
+                                    No requests
+                                </strong>
+                            `}
+                        </section>
+                    `
+                })
                 renderElem(getRef('sub_page_container'), html`
-                    <section>
-                        <h1>Sub Admin Dashboard</h1>
-                    </section>
-                `);
-            } else if (floGlobals.isAdmin) {
-                renderElem(getRef('sub_page_container'), html`
-                    <section class="grid gap-1">
-                        <h1>Admin Dashboard</h1>
-                    </section>
+                    <div id="main_page" class="grid gap-2">
+                        ${balanceCard()}
+                        ${bankerInbox()}
+                    </div>
                 `);
             } else {
                 // user homepage
@@ -1109,66 +1200,6 @@
                                 `: ''}
                             </div>
                         </section>
-                    `
-                })
-                const balanceCard = Component(() => {
-                    const [btcBalance, setBtcBalance] = useState(floGlobals.memoBalance['BTC'])
-                    const [floBalance, setFloBalance] = useState(floGlobals.memoBalance['FLO'])
-                    const [usdBalance, setUsdBalance] = useState(floGlobals.memoBalance['USD'])
-                    const [isRefreshing, setIsRefreshing] = useState(false)
-                    function fetchBalance() {
-                        setIsRefreshing(true)
-                        Promise.allSettled([
-                            btcOperator.getBalance(floGlobals.myBtcID),
-                            floBlockchainAPI.getBalance(floGlobals.myFloID),
-                            floTokenAPI.getBalance(floGlobals.myFloID, 'usd')
-                        ]).then(result => {
-                            const [btcBalance, floBalance, usdBalance] = result.map(({ value }) => value)
-                            floGlobals.memoBalance = {
-                                'FLO': floBalance,
-                                'BTC': btcBalance,
-                                'USD': usdBalance
-                            }
-                            setBtcBalance(btcBalance)
-                            setFloBalance(floBalance)
-                            setUsdBalance(usdBalance)
-                        }).catch(error => {
-                            console.error(error)
-                        }).finally(() => {
-                            setIsRefreshing(false)
-                        })
-                    }
-                    useEffect(() => {
-                        if (lastPage !== page)
-                            fetchBalance()
-                    }, [])
-                    return html`
-                        <div class="grid gap-1-5">
-                            <div class="flex align-center space-between gap-1">
-                                <h4>My balances</h4>
-                                <button class="button button--colored button--small" disabled=${isRefreshing} onclick=${fetchBalance}>
-                                    ${isRefreshing ? html`
-                                        Refreshing <sm-spinner class="margin-left-0-5"></sm-spinner>
-                                    `: html`
-                                        Refresh        
-                                    `}
-                                </button>
-                            </div>
-                            <ul id="balance_list">
-                                <li class="balance-card">
-                                    <span>BTC</span>
-                                    <span>${formatAmount(btcBalance)}</span>
-                                </li>
-                                <li class="balance-card">
-                                    <span>FLO</span>
-                                    <span>${formatAmount(floBalance, 'FLO')}</span>
-                                </li>
-                                <li class="balance-card">
-                                    <span>USD</span>
-                                    <span>${formatAmount(usdBalance, 'usd')}</span>
-                                </li>
-                            </ul>
-                        </div>
                     `
                 })
                 renderElem(getRef('sub_page_container'), html`
@@ -1365,77 +1396,107 @@
                 setInterval(() => {
                     fetchBtcRate()
                 }, 1000 * 60 * 5) // check BTC rate every 5 minutes
-                btcMortgage.init().then(result => {
+                btcMortgage.init().then(async result => {
                     console.info(result)
-                    Promise.allSettled([
-                        new Promise((resolve, reject) => {
-                            btcMortgage.viewMyInbox((d, e) => {
-                                if (e) return
-                                floGlobals.myInbox = {
-                                    ...floGlobals.myInbox,
-                                    ...d
-                                }
-                                console.log('MY INBOX', d)
-                                if (floGlobals.loaded) {
-                                    router.routeTo(window.location.hash)
-                                }
-                                resolve()
-                            }).catch(error => {
-                                reject(error)
-                            })
-                        }),
-                        new Promise((resolve, reject) => {
-                            btcMortgage.listLoanRequests((d, e) => {
-                                if (e) return
-                                floGlobals.loanRequests = {
-                                    ...floGlobals.loanRequests,
-                                    ...d
-                                }
-                                console.log('LOAN REQUESTS', d)
-                                if (floGlobals.loaded) {
-                                    router.routeTo(window.location.hash)
-                                }
-                                resolve()
-                            }).catch(error => {
-                                reject(error)
-                            })
-                        }),
-                        new Promise((resolve, reject) => {
-                            btcMortgage.viewMyOutbox((d, e) => {
-                                if (e) return
-                                floGlobals.myOutbox = {
-                                    ...floGlobals.myOutbox || {},
-                                    ...d
-                                }
-                                console.log('MY OUTBOX', d)
-                                if (floGlobals.loaded) {
-                                    router.routeTo(window.location.hash)
-                                }
-                                resolve()
-                            }).then(d => {
-                                floGlobals.myOutbox = {
-                                    ...floGlobals.myOutbox || {},
-                                    ...d
-                                }
-                            })
-                                .catch(error => {
-                                    reject(error)
-                                })
-                        }),
-                        new Promise((resolve, reject) => {
-                            floCloudAPI.requestApplicationData('in_process_loan_request', {
+                    try {
+                        if (floCrypto.isSameAddr(floDapps.user.id, btcMortgage.banker.id)) {
+                            floCloudAPI.requestApplicationData(null, {
                                 callback: (d, e) => {
                                     if (e) return
-                                    parseInProcessRequests(d)
-                                    console.log('IN PROCESS LOAN REQUEST', d)
+                                    for (const key in d) {
+                                        if (
+                                            d[key].type === 'type_unlock_collateral_request' ||
+                                            d[key].type === 'type_unlock_collateral_ack' ||
+                                            d[key].type === 'type_refund_collateral_request' ||
+                                            d[key].type === 'type_refund_collateral_ack' ||
+                                            d[key].type === 'type_liquate_collateral_request' ||
+                                            d[key].type === 'type_liquate_collateral_ack' ||
+                                            d[key].type === 'type_preliquate_collateral_request' ||
+                                            d[key].type === 'type_preliquate_collateral_ack'
+                                        ) {
+                                            floGlobals.bankerRequests = {
+                                                ...floGlobals.bankerRequests || {},
+                                                [key]: d[key]
+                                            }
+                                        }
+                                    }
+                                    console.log('LOAN REQUESTS', d)
                                     if (floGlobals.loaded) {
                                         router.routeTo(window.location.hash)
                                     }
-                                    resolve()
                                 }
                             })
-                        })
-                    ]).then(result => {
+                        } else {
+                            const result = await Promise.allSettled([
+                                new Promise((resolve, reject) => {
+                                    btcMortgage.viewMyInbox((d, e) => {
+                                        if (e) return
+                                        floGlobals.myInbox = {
+                                            ...floGlobals.myInbox,
+                                            ...d
+                                        }
+                                        console.log('MY INBOX', d)
+                                        if (floGlobals.loaded) {
+                                            router.routeTo(window.location.hash)
+                                        }
+                                        resolve()
+                                    }).catch(error => {
+                                        reject(error)
+                                    })
+                                }),
+                                new Promise((resolve, reject) => {
+                                    btcMortgage.listLoanRequests((d, e) => {
+                                        if (e) return
+                                        floGlobals.loanRequests = {
+                                            ...floGlobals.loanRequests,
+                                            ...d
+                                        }
+                                        console.log('LOAN REQUESTS', d)
+                                        if (floGlobals.loaded) {
+                                            router.routeTo(window.location.hash)
+                                        }
+                                        resolve()
+                                    }).catch(error => {
+                                        reject(error)
+                                    })
+                                }),
+                                new Promise((resolve, reject) => {
+                                    btcMortgage.viewMyOutbox((d, e) => {
+                                        if (e) return
+                                        floGlobals.myOutbox = {
+                                            ...floGlobals.myOutbox || {},
+                                            ...d
+                                        }
+                                        console.log('MY OUTBOX', d)
+                                        if (floGlobals.loaded) {
+                                            router.routeTo(window.location.hash)
+                                        }
+                                        resolve()
+                                    }).then(d => {
+                                        floGlobals.myOutbox = {
+                                            ...floGlobals.myOutbox || {},
+                                            ...d
+                                        }
+                                    })
+                                        .catch(error => {
+                                            reject(error)
+                                        })
+                                }),
+                                new Promise((resolve, reject) => {
+                                    floCloudAPI.requestApplicationData('in_process_loan_request', {
+                                        callback: (d, e) => {
+                                            if (e) return
+                                            parseInProcessRequests(d)
+                                            console.log('IN PROCESS LOAN REQUEST', d)
+                                            if (floGlobals.loaded) {
+                                                router.routeTo(window.location.hash)
+                                            }
+                                            resolve()
+                                        }
+                                    })
+                                })
+                            ])
+                        }
                         console.log(result)
                         if (['#/landing', '#/sign_in', '#/sign_up'].includes(window.location.hash)) {
                             history.replaceState(null, null, '#/home')
@@ -1444,10 +1505,9 @@
                             router.routeTo(window.location.hash)
                         }
                         floGlobals.loaded = true
-                    }).catch(error => {
-                        console.error(error)
+                    } catch (error) {
                         notify(error, 'error')
-                    })
+                    }
                 }).catch(error => {
                     let isBrave = navigator.brave !== undefined
                     if (error === 'Cloud offline') {
