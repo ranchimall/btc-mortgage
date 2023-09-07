@@ -142,7 +142,7 @@
     const util = btcMortgage.util = {
         toFixedDecimal,
         encodePeriod, decodePeriod,
-        calcAllowedLoan, calcRequiredCollateral,
+        calcAllowedLoan, calcRequiredCollateral, calcDueAmount,
         findLocker, extractPubKeyFromSign
     }
 
