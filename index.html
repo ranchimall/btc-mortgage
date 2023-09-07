@@ -530,7 +530,7 @@
                         } else {
                             notify('Loan request sent to collateral provider', 'success')
                         }
-                        location.hash = '#/home/my-loans'
+                        location.hash = '#/home/in-process'
                         closePopup()
                     } catch (err) {
                         console.error(err)
@@ -645,9 +645,9 @@
                 const {
                     loanOpeningProcessID,
                     borrower, isBorrower, coborrower, isCoborrower, lender, isLender, loanAmount, policyID,
-                    initiationTime, loanRequestTime, loanResponseTime, collateralLockAckTime,
+                    initiationTime, loanRequestTime, loanResponseTime, collateralLockAckTime, loanIssuedTime,
                     hasProvidedCollateral, hasAgreedToLend, hasRequestedCollateralLock, hasLockedCollateral, hasIssuedLoan, hasRequestedCollateralRefund,
-                    collateralRequestID, loanRequestID, loanResponseID, collateralLockRequestID, collateralLockAckID
+                    collateralRequestID, loanRequestID, loanResponseID, collateralLockRequestID, collateralLockAckID, loanID
                 } = details
                 return Component(() => {
                     const [verifyingCollateral, setVerifyCollateral] = useState(false)
@@ -706,7 +706,8 @@
                             await btcMortgage.sendLoanAmount(collateralLockAckID, borrower, coborrower, await floDapps.user.private)
                             notify('Loan issued successfully', 'success')
                         } catch (err) {
-                            notify(err.message, 'error')
+                            notify(err.message || err, 'error')
+                            console.error(err)
                         } finally {
                             setIsIssuingLoan(false)
                         }
@@ -773,131 +774,200 @@
                         openPopup('request_details_popup')
                     }
                     return html`
-                    <li class="loan-process">
-                        <div class="flex align-center gap-1 space-between">
-                            <p>Loan request: ${loanOpeningProcessID}</p>
-                            <button class="button button--colored button--small" onclick=${showLoanRequestDetails}>View details</button>
-                        </div>    
-                        <ul>
-                            ${!isLender ? html`                                
-                                <li class=${`${hasProvidedCollateral ? 'done' : ''}`}>
+                        <li class="loan-process">
+                            <div class="flex align-center gap-1 space-between">
+                                ${isBorrower ? html`
+                                    <h4 class="loan-process__type">Borrowing</h4>
+                                `: html`
+                                    ${isCoborrower ? html`
+                                            <h4 class="loan-process__type">Co-borrowing</h4>
+                                        `: html`
+                                            <h4 class="loan-process__type">Lending</h4>
+                                        `
+                            }
+                                `}
+                                <button class="button button--colored button--small" onclick=${showLoanRequestDetails}>View details</button>
+                            </div>    
+                            <ul>
+                                ${!isLender ? html`                                
+                                    <li class=${`${hasProvidedCollateral ? 'done' : ''}`}>
+                                        <div class="progress">
+                                            <div class="circle"></div>
+                                            <div class="line"></div>
+                                        </div>
+                                        <div class="details">
+                                            <h4>Initiated loan request</h4>
+                                            ${hasProvidedCollateral ? html`
+                                                <time>${getFormattedTime(initiationTime)}</time>
+                                            `: html`
+                                                ${isCoborrower ? html`
+                                                <p>Verify that you have <b>${formatAmount(collateralAmount)}</b> as collateral</p>
+                                                    <button class="button button--primary margin-right-auto" disabled=${verifyingCollateral} onclick=${verifyCollateral}>
+                                                        ${verifyingCollateral ? html`
+                                                            Verifying collateral
+                                                            <sm-spinner class="margin-left-0-5"></sm-spinner>
+                                                        `: html`
+                                                            Verify collateral
+                                                        `}
+                                                    </button>
+                                                `: html`
+                                                    <p>Waiting for Co-Borrower to confirm collateral availability</p>
+                                                `}
+                                            `}
+                                        </div>
+                                    </li>
+                                `: ''}
+                                <li class=${`${hasAgreedToLend ? 'done' : ''}`}>
                                     <div class="progress">
                                         <div class="circle"></div>
                                         <div class="line"></div>
                                     </div>
                                     <div class="details">
-                                        <h4>Initiated loan request</h4>
-                                        ${hasProvidedCollateral ? html`
-                                            <time>${getFormattedTime(initiationTime)}</time>
+                                        ${hasAgreedToLend ? html`
+                                            <h4>Started lending process</h4>
+                                            <time>${getFormattedTime(loanResponseTime)}</time>
                                         `: html`
-                                            ${isCoborrower ? html`
-                                            <p>Verify that you have <b>${formatAmount(collateralAmount)}</b> as collateral</p>
-                                                <button class="button button--primary margin-right-auto" disabled=${verifyingCollateral} onclick=${verifyCollateral}>
-                                                    ${verifyingCollateral ? html`
-                                                        Verifying collateral
+                                            <h4>Waiting for a lender</h4>
+                                            <p>Your loan request has been posted to the marketplace. Waiting for a lender to start lending process.</p>
+                                        `}
+                                    </div>
+                                </li>
+                                <li class=${`${hasLockedCollateral ? 'done' : ''}`}>
+                                    <div class="progress">
+                                        <div class="circle"></div>
+                                        <div class="line"></div>
+                                    </div>
+                                    <div class="details">
+                                        ${hasLockedCollateral ? html`
+                                            <h4>Collateral locked</h4>
+                                            ${hasLockedCollateralForMoreThan24Hours ? html`
+                                                ${hasRequestedCollateralRefund ? html`
+                                                    <p>Collateral refund requested. It'll be refunded within 24 hrs.</p>
+                                                `: html`
+                                                    <p>
+                                                        Loan has not been issued even after 24 hours of collateral lock.
+                                                        You can request for collateral refund. 
+                                                    </p>    
+                                                    <button class="button button--primary margin-right-auto" disabled=${requestCollateralRefund} onclick=${requestCollateralRefund}>
+                                                        ${requestingCollateralRefund ? html`
+                                                            Requesting collateral refund
+                                                            <sm-spinner class="margin-left-0-5"></sm-spinner>
+                                                        `: html`
+                                                            Request collateral refund
+                                                        `}
+                                                    </button>
+                                                `}
+                                            `: html`
+                                                <time>${getFormattedTime(collateralLockAckTime)}</time>
+                                            `}
+                                        `: html`
+                                            <h4>Waiting for collateral to be locked</h4>
+                                            <p>${isCoborrower ? 'You need' : 'Loan co-borrower needs'} to lock collateral before loan can be issued.</p>
+                                            ${hasAgreedToLend && (isBorrower || isCoborrower) ? html`
+                                                ${floCrypto.isSameAddr(borrower, coborrower) ? html`
+                                                    <button class="button button--primary margin-right-auto" disabled=${lockingCollateral} onclick=${lockCollateral}>
+                                                        ${lockingCollateral ? html`
+                                                            Locking collateral
+                                                            <sm-spinner class="margin-left-0-5"></sm-spinner>
+                                                        `: html`
+                                                            Lock collateral
+                                                        `}
+                                                    </button>
+                                                `: html`
+                                                    <button class="button button--primary margin-right-auto" onclick=${requestCollateralLock}>Request collateral lock</button>    
+                                                `}
+                                            `: ''}
+                                        `}
+                                    </div>
+                                </li>
+                                <li class=${`${hasIssuedLoan ? 'done' : ''}`}>
+                                    <div class="progress">
+                                        <div class="circle"></div>
+                                    </div>
+                                    <div class="details">
+                                        ${hasIssuedLoan ? html`
+                                            <h4>Loan issued</h4>
+                                            <time>${getFormattedTime(loanIssuedTime)}</time>
+                                        `: html`
+                                            ${hasLockedCollateral && isLender ? html`
+                                                <button class="button button--primary margin-right-auto" disabled=${isIssuingLoan} onclick=${issueLoan}>
+                                                    ${isIssuingLoan ? html`
+                                                        Issuing loan
                                                         <sm-spinner class="margin-left-0-5"></sm-spinner>
                                                     `: html`
-                                                        Verify collateral
+                                                        Issue loan
                                                     `}
                                                 </button>
                                             `: html`
-                                                <p>Waiting for Co-Borrower to confirm collateral availability</p>
+                                                <h4>Waiting for loan to be issued</h4>
                                             `}
                                         `}
                                     </div>
                                 </li>
-                            `: ''}
-                            <li class=${`${hasAgreedToLend ? 'done' : ''}`}>
-                                <div class="progress">
-                                    <div class="circle"></div>
-                                    <div class="line"></div>
-                                </div>
-                                <div class="details">
-                                    ${hasAgreedToLend ? html`
-                                        <h4>Started lending process</h4>
-                                        <time>${getFormattedTime(loanResponseTime)}</time>
-                                    `: html`
-                                        <h4>Waiting for a lender</h4>
-                                        <p>Your loan request has been posted to the marketplace. Waiting for a lender to start lending process.</p>
-                                    `}
-                                </div>
-                            </li>
-                            <li class=${`${hasLockedCollateral ? 'done' : ''}`}>
-                                <div class="progress">
-                                    <div class="circle"></div>
-                                    <div class="line"></div>
-                                </div>
-                                <div class="details">
-                                    ${hasLockedCollateral ? html`
-                                        <h4>Collateral locked</h4>
-                                        ${hasLockedCollateralForMoreThan24Hours ? html`
-                                            ${hasRequestedCollateralRefund ? html`
-                                                <p>Collateral refund requested. It'll be refunded within 24 hrs.</p>
-                                            `: html`
-                                                <p>
-                                                    Loan has not been issued even after 24 hours of collateral lock.
-                                                    You can request for collateral refund. 
-                                                </p>    
-                                                <button class="button button--primary margin-right-auto" disabled=${requestCollateralRefund} onclick=${requestCollateralRefund}>
-                                                    ${requestingCollateralRefund ? html`
-                                                        Requesting collateral refund
-                                                        <sm-spinner class="margin-left-0-5"></sm-spinner>
-                                                    `: html`
-                                                        Request collateral refund
-                                                    `}
-                                                </button>
-                                            `}
-                                        `: html`
-                                            <time>${getFormattedTime(collateralLockAckTime)}</time>
-                                        `}
-                                    `: html`
-                                        <h4>Waiting for collateral to be locked</h4>
-                                        <p>${isCoborrower ? 'You need' : 'Loan co-borrower needs'} to lock collateral before loan can be issued.</p>
-                                        ${hasAgreedToLend && (isBorrower || isCoborrower) ? html`
-                                            ${floCrypto.isSameAddr(borrower, coborrower) ? html`
-                                                <button class="button button--primary margin-right-auto" disabled=${lockingCollateral} onclick=${lockCollateral}>
-                                                    ${lockingCollateral ? html`
-                                                        Locking collateral
-                                                        <sm-spinner class="margin-left-0-5"></sm-spinner>
-                                                    `: html`
-                                                        Lock collateral
-                                                    `}
-                                                </button>
-                                            `: html`
-                                                <button class="button button--primary margin-right-auto" onclick=${requestCollateralLock}>Request collateral lock</button>    
-                                            `}
-                                        `: ''}
-                                    `}
-                                </div>
-                            </li>
-                            <li class=${`${hasIssuedLoan ? 'done' : ''}`}>
-                                <div class="progress">
-                                    <div class="circle"></div>
-                                </div>
-                                <div class="details">
-                                    ${hasIssuedLoan ? html`
-                                        <h4>Loan issued</h4>
-                                    `: html`
-                                        ${hasLockedCollateral && isLender ? html`
-                                            <button class="button button--primary margin-right-auto" disabled=${isIssuingLoan} onclick=${issueLoan}>
-                                                ${isIssuingLoan ? html`
-                                                    Issuing loan
-                                                    <sm-spinner class="margin-left-0-5"></sm-spinner>
-                                                `: html`
-                                                    Issue loan
-                                                `}
-                                            </button>
-                                        `: html`
-                                            <h4>Waiting for loan to be issued</h4>
-                                        `}
-                                    `}
-                                </div>
-                            </li>
-                        </ul>
-                    </li>
-                `
+                            </ul>
+                            <p class="margin-left-auto">Request ID: #${loanOpeningProcessID}</p>
+                        </li>
+                    `
                 })()
             },
+            loan(loanID) {
+                const {
+                    blocktime, borrower, borrower_sign, btc_start_rate,
+                    coborrower, coborrower_sign, collateral_lock_id, collateral_value,
+                    lender, lender_sign, loan_amount, loan_id, loan_opening_process_id, loan_transfer_id,
+                    open_time, policy_id, } = btcMortgage.loans[loanID]
+                return html`
+                    <li class="loan">
+                        <sm-copy value=${loan_id} clip-text>
+                            <p>Loan ID: ${loan_id}</p>
+                        </sm-copy>
+                        <div class="flex flex-wrap gap-1-5 align-items-start">
+                            <div class="grid gap-0-3">
+                                <p>Loan amount</p>
+                                <b>${formatAmount(loan_amount, 'usd')}</b>
+                            </div>
+                            <div class="grid gap-0-3">
+                                <p>Collateral amount</p>
+                                <b>${formatAmount(collateral_value)}</b>
+                            </div>
+                            <div class="grid gap-0-3">
+                                <p>Duration</p>
+                                <b>${btcMortgage.policies[policy_id]?.duration}</b>
+                            </div>
+                            <div class="grid gap-0-3">
+                                <p>Interest</p>
+                                <b>${btcMortgage.policies[policy_id]?.interest * 100}% p.a</b>  
+                            </div>
+                            <div class="grid gap-0-3">
+                                <p>Loan start date</p>
+                                <b>${getFormattedTime(open_time)}</b>
+                            </div>
+                        </div>
+                        <details>
+                            <summary>
+                                Borrower details
+                                <svg class="icon down-arrow" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><path d="M24 24H0V0h24v24z" fill="none" opacity=".87"></path><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6-1.41-1.41z"></path></svg>
+                            </summary>
+                            <div class="grid gap-1-5">
+                                <div class="grid">
+                                    <p>Borrower</p>
+                                    <sm-copy value=${getBtcAddress(borrower)}>
+                                        <b>${getBtcAddress(borrower)}</b>
+                                    </sm-copy>
+                                </div>
+                                ${!floCrypto.isSameAddr(borrower, coborrower) ? html`
+                                    <div class="grid">
+                                        <p>Collateral provider</p>
+                                        <sm-copy value=${getBtcAddress(coborrower)}>
+                                            <b>${getBtcAddress(coborrower)}</b>
+                                        </sm-copy>
+                                    </div>
+                                `: ''}
+                            </div>
+                        </details>
+                    </li>
+                `
+            }
         }
         // routing logic
         const router = new Router({
@@ -1060,6 +1130,7 @@
         let userAddressTimeInterval;
         function renderHome(appState) {
             const { lastPage, page, params: { } = {}, wildcards: [section = 'my-loans'] = [] } = appState || {};
+
             const balanceCard = Component(() => {
                 const [btcBalance, setBtcBalance] = useState(floGlobals.memoBalance['BTC'])
                 const [floBalance, setFloBalance] = useState(floGlobals.memoBalance['FLO'])
@@ -1164,7 +1235,8 @@
             } else {
                 // user homepage
                 const inbox = Component(() => {
-                    const { borrowed, coborrowed, lent } = groupLoanProcess()
+                    const inProcessRequests = groupLoanProcess()
+                    const { borrowed, coBorrowed, lent } = groupLoans()
                     const [view, setView] = useState(section)
                     let loanRequests = [];
                     for (const key in floGlobals.loanRequests) {
@@ -1178,25 +1250,29 @@
                         setView(e.target.value)
                     }
                     if (
-                        coborrowed.length === 0 && view === 'coborrowed'
-                        || lent.length === 0 && view === 'lent'
-                        || loanRequests.length === 0 && view === 'lend'
+                        coBorrowed.length === 0 && view === 'coBorrowed' ||
+                        lent.length === 0 && view === 'lent' ||
+                        loanRequests.length === 0 && view === 'lend'
                     ) {
-                        // if no loans in coborrowed or lent or loan requests, redirect to my-loans
+                        // if there are no loans in the selected view, switch to my-loans
                         history.replaceState(null, null, `#/home/my-loans`)
                         setView('my-loans')
                     }
                     return html`
                         <section class="grid gap-1">
                             <sm-chips onchange=${handleChange}>
+                                <sm-chip value="in-process" selected=${view === 'in-process'}>
+                                    In process
+                                    ${inProcessRequests.length ? html`<span class="badge">${inProcessRequests.length}</span>` : ''}
+                                </sm-chip>
                                 <sm-chip value="my-loans" selected=${view === 'my-loans'}>
-                                    My Loans
+                                    My loans
                                     ${borrowed.length ? html`<span class="badge">${borrowed.length}</span>` : ''}
                                 </sm-chip>
-                                ${coborrowed.length ? html`
-                                    <sm-chip value="coborrowed" selected=${view === 'coborrowed'}>
-                                        Coborrowed
-                                        <span class="badge">${coborrowed.length}</span>
+                                ${coBorrowed.length ? html`
+                                    <sm-chip value="coBorrowed" selected=${view === 'coBorrowed'}>
+                                        Co-borrowed
+                                        <span class="badge">${coBorrowed.length}</span>
                                     </sm-chip>
                                 ` : ''}
                                 ${lent.length ? html`
@@ -1216,7 +1292,7 @@
                                 ${view === 'my-loans' ? html`
                                     ${borrowed.length ? html`
                                         <ul class="grid gap-1">
-                                            ${borrowed.map(loan => render.loanProcess(loan))}
+                                            ${borrowed.map(loan => render.loan(loan))}
                                         </ul> 
                                         <a href="#/apply-loan" class="button button--primary margin-right-auto">Apply for a new loan</a>
                                     `: html`
@@ -1229,9 +1305,25 @@
                                         </div>
                                     `}
                                 `: ''}
-                                ${view === 'coborrowed' && coborrowed.length ? html`
+                                ${view === 'in-process' ? html`
+                                    ${inProcessRequests.length ? html`
+                                        <ul class="grid gap-1">
+                                            ${inProcessRequests.map(loan => render.loanProcess(loan))}
+                                        </ul> 
+                                        <a href="#/apply-loan" class="button button--primary margin-right-auto">Apply for a new loan</a>
+                                    `: html`
+                                        <div class="grid gap-2 align-center justify-center" style="padding: 2vw 0;">
+                                            <div class="grid gap-0-5">
+                                                <h1>Looking for USD loans?</h1>
+                                                <p>Get a loan against your BTC collateral</p>
+                                            </div>
+                                            <a href="#/apply-loan" class="button button--primary margin-right-auto">Apply for a loan</a>
+                                        </div>
+                                    `}
+                                `: ''}
+                                ${view === 'coBorrowed' && coBorrowed.length ? html`
                                     <ul class="grid gap-1">
-                                        ${coborrowed.map(loan => render.loanProcess(loan))}
+                                        ${coBorrowed.map(loan => render.loanProcess(loan))}
                                     </ul> 
                                 `: html``}
                                 ${view === 'lent' && lent.length ? html`
@@ -1240,13 +1332,12 @@
                                     </ul> 
                                 `: html``}
                                 ${view === 'lend' ? html`
-                                <div class="grid gap-2 align-center justify-center" style="padding: 2vw 0;">
-                                    <div class="grid">
-                                        <h2>Earn interest on your USD tokens</h2>
-                                        <p>Lend your USD tokens to earn interest assured by BTC collateral.</p>
+                                    <div class="grid gap-2 align-center justify-center" style="padding: 2vw 0;">
+                                        <div class="grid">
+                                            <h2>Earn interest on your USD tokens</h2>
+                                            <p>Lend your USD tokens to earn interest assured by BTC collateral.</p>
+                                        </div>         
                                     </div>
-                                    
-                                </div>
                                     ${loanRequests.length ? html`
                                         <ul id="loan_requests_list">
                                             ${loanRequests.reverse().map(requestId => render.loanRequest(requestId, floGlobals.loanRequests[requestId]))}
@@ -1289,6 +1380,8 @@
             for (const key in allMessages) {
                 const { message: { borrower, coborrower, loan_amount, policy_id, loan_opening_process_id, lender, loan_request_id, collateral_lock_id } = {}, type, time } = allMessages[key];
                 if (!loan_opening_process_id) continue
+                if (Object.values(btcMortgage.loans).find(loan => loan.loan_opening_process_id === loan_opening_process_id))
+                    continue // Loan is already open
                 if (!loansInProcess[loan_opening_process_id]) {
                     loansInProcess[loan_opening_process_id] = {
                         loanOpeningProcessID: loan_opening_process_id,
@@ -1358,17 +1451,36 @@
             return Object.values(loansInProcess).sort((a, b) => {
                 return (b.initiationTime || b.loanResponseTime) - (a.initiationTime || a.loanResponseTime)
             })
-                .reduce((acc, loan) => { // group by borrower, coborrower and lender
-                    if (loan.isBorrower)
-                        acc.borrowed.push(loan)
-                    else if (loan.isCoborrower)
-                        acc.coborrowed.push(loan)
-                    else if (loan.isLender)
-                        acc.lent.push(loan)
+            // .reduce((acc, loan) => { // group by borrower, coborrower and lender
+            //     if (loan.isBorrower)
+            //         acc.borrowing.push(loan)
+            //     else if (loan.isCoborrower)
+            //         acc.coBorrowing.push(loan)
+            //     else if (loan.isLender)
+            //         acc.lending.push(loan)
+            //     return acc
+            // }, {
+            //     borrowing: [],
+            //     coBorrowing: [],
+            //     lending: []
+            // })
+        }
+
+        function groupLoans() {
+            console.log(btcMortgage.loans)
+            return Object.values(btcMortgage.loans)
+                .reduce((acc, loan) => {
+                    const { loan_id, borrower, coborrower, lender } = loan
+                    if (floCrypto.isSameAddr(borrower, floDapps.user.id) && floCrypto.isSameAddr(coborrower, floDapps.user.id))
+                        acc.borrowed.push(loan_id)
+                    else if (floCrypto.isSameAddr(coborrower, floDapps.user.id))
+                        acc.coBorrowed.push(loan_id)
+                    else if (floCrypto.isSameAddr(lender, floDapps.user.id))
+                        acc.lent.push(loan_id)
                     return acc
                 }, {
                     borrowed: [],
-                    coborrowed: [],
+                    coBorrowed: [],
                     lent: []
                 })
         }

@@ -183,6 +183,7 @@ details summary {
   align-items: center;
   gap: 0.5rem;
   color: var(--accent-color);
+  font-weight: 500;
 }
 details summary .down-arrow {
   fill: var(--accent-color);
@@ -773,6 +774,14 @@ h3 {
   width: 1.2em;
 }
 
+.loan {
+  display: grid;
+  gap: 1rem;
+  background-color: rgba(var(--foreground-color), 1);
+  padding: max(1rem, 1.5vw);
+  border-radius: 0.5rem;
+}
+
 .loan-process {
   display: grid;
   gap: 1rem;
@@ -780,6 +789,22 @@ h3 {
   padding: max(1rem, 1.5vw);
   border-radius: 0.5rem;
   --progress-line-thickness: 0.15rem;
+}
+.loan-process__type {
+  position: relative;
+  padding-bottom: 0.5rem;
+  color: rgba(var(--text-color), 0.8);
+}
+.loan-process__type::before {
+  content: "";
+  position: absolute;
+  height: 0.2rem;
+  width: 40%;
+  left: 0;
+  bottom: 0;
+  transform: translateY(-50%);
+  border-radius: 0 0.5rem 0.5rem 0;
+  background-color: var(--accent-color);
 }
 .loan-process ul {
   display: grid;

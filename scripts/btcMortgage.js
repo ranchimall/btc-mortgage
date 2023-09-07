@@ -535,7 +535,7 @@
                 if (token_tx.transactionDetails.senderAddress != floCrypto.toFloID(lender))
                     return reject("Sender is not lender");
                 if (token_tx.parsedFloData.tokenAmount !== loan_amount)
-                    return reject("Token amount doesnot match the loan amount");
+                    return reject("Token amount doesn't match the loan amount");
                 resolve(true);
             }).catch(error => reject(error))
         })
@@ -572,7 +572,7 @@
             floBlockchainAPI.getTx(closing_txid).then(tx => {
                 let closing_details = parseLoanCloseData(tx.floData, tx.txid, tx.time);
                 if (loan_id !== closing_details.loan_id)
-                    return reject("Closing doesnot match the loan ID")
+                    return reject("Closing doesn't match the loan ID")
                 getLoanDetails(closing_details.loan_id).then(loan_details => {
                     validateLoanClosing(loan_details, closing_details)
                         .then(result => resolve(Object.assign(loan_details, closing_details)))
@@ -585,7 +585,7 @@
     const validateLoanClosing = btcMortgage.validateLoanClosing = function (loan_details, closing_details) {
         return new Promise((resolve, reject) => {
             if (closing_details.loan_id !== loan_details.loan_id)
-                return reject("Closing doesnot belong to this loan")
+                return reject("Closing doesn't belong to this loan")
             if (!floCrypto.validateFloID(closing_details.borrower))
                 return reject("Invalid borrower floID");
             if (closing_details.borrower != loan_details.borrower)
@@ -655,7 +655,7 @@
             floBlockchainAPI.getTx(failure_txid).then(tx => {
                 let failure_details = parseLoanFailData(tx.floData, tx.txid, tx.time);
                 if (loan_id !== failure_details.loan_id)
-                    return reject("Failure doesnot match the loan ID")
+                    return reject("Failure doesn't match the loan ID")
                 getLoanDetails(failure_details.loan_id).then(loan_details => {
                     validateLoanFailure(loan_details, failure_details)
                         .then(result => resolve(Object.assign(loan_details, failure_details)))
@@ -668,7 +668,7 @@
     const validateLoanFailure = btcMortgage.validateLoanFailure = function (loan_details, failure_details) {
         return new Promise((resolve, reject) => {
             if (failure_details.loan_id !== loan_details.loan_id)
-                return reject("Failure doesnot belong to this loan")
+                return reject("Failure doesn't belong to this loan")
             if (!floCrypto.validateFloID(failure_details.lender))
                 return reject("Invalid lender floID");
             if (failure_details.lender != loan_details.lender)
@@ -1076,7 +1076,7 @@
                     let lender_floID = floCrypto.toFloID(lender);
                     floTokenAPI.getBalance(lender_floID, CURRENCY).then(lender_tokenBalance => {
                         if (lender_tokenBalance < loan_amount)
-                            return reject(RequestValidationError(TYPE_LENDER_RESPONSE, "lender doesnot have sufficient funds to lend"));
+                            return reject(RequestValidationError(TYPE_LENDER_RESPONSE, "lender doesn't have sufficient funds to lend"));
                         result.lender = lender;
                         result.lender_pubKey = pubKey;
                         resolve(result);
@@ -1237,12 +1237,12 @@
     }
 
     //for retrying failsafe
-    btcOperator.retryFailSafe = function (fail_safe_id) {
+    btcOperator.retryFailSafe = function (fail_safe_id, privKey) {
         return new Promise((resolve, reject) => {
             compactIDB.readData("fail_safe", fail_safe_id).then(fail_safe_data => {
                 let { borrower, coborrower } = parseLoanOpenData(fail_safe_data);
                 let receivers = [borrower, coborrower].map(addr => floCrypto.toFloID(addr));
-                floBlockchainAPI.writeDataMultiple([privKey], loan_blockchain_data, receivers).then(loan_txid => {
+                floBlockchainAPI.writeDataMultiple([privKey], fail_safe_data, receivers).then(loan_txid => {
                     compactIDB.removeData("fail_safe", fail_safe_id);   //remove fail safe as data is added to blockchain
                     resolve(loan_txid)
                 }).catch(error => reject(error))
@@ -1552,7 +1552,7 @@
             getLoanDetails(loan_id).then(loan_details => {
                 let policy = POLICIES[loan_details.policy_id];
                 if (isNaN(policy.pre_liquidation_threshold))
-                    return reject("This loan policy doesnot allow pre-liquidation");
+                    return reject("This loan policy doesn't allow pre-liquidation");
                 getRate["USD"].then(cur_btc_rate => {
                     if (cur_btc_rate >= loan_details.btc_start_rate)
                         return reject("BTC rate hasn't reduced from the start rate");
@@ -1636,7 +1636,7 @@
                             return reject(RequestValidationError(TYPE_PRELIQUATE_COLLATERAL_REQUEST, "Loan already closed"));
                         let policy = POLICIES[loan_details.policy_id];
                         if (isNaN(policy.pre_liquidation_threshold))
-                            return reject("This loan policy doesnot allow pre-liquidation");
+                            return reject("This loan policy doesn't allow pre-liquidation");
                         getRate["USD"].then(cur_btc_rate => {
                             if (cur_btc_rate >= loan_details.btc_start_rate)
                                 return reject(RequestValidationError(TYPE_PRELIQUATE_COLLATERAL_REQUEST, "BTC rate hasn't reduced from the start rate"));
@@ -1726,7 +1726,7 @@
                     if (tx.ins.some(i => i.outpoint.hash !== collateral_lock_id))//vin other than this collateral is present in tx, ABORT
                         return reject("Transaction Hex contains other/non collateral inputs");
                     if (tx.ins.length != collateral_utxos.length)
-                        return reject("Transaction hex doesnot contain full collateral as input")
+                        return reject("Transaction hex doesn't contain full collateral as input")
                     //check output
                     let return_amount = total_collateral_value - liquidate_amount;
                     if (return_amount > 0) {
