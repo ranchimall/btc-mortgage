@@ -551,8 +551,8 @@
                             <p>${interest * 100}% p.a</p>
                         </div>
                         <div class="grid gap-0-3">
-                            <h5>Loan to collateral ratio</h5>
-                            <p>${loan_collateral_ratio * 100}%</p>
+                            <h5>Collateral required</h5>
+                            <p>${parseFloat((1 / loan_collateral_ratio).toFixed(2))}x</p>
                         </div>
                         <div class="grid gap-0-3">
                             <h5>Pre-liquidation threshold</h5>
@@ -1386,12 +1386,12 @@
                                 `: ''}
                                 ${view === 'coBorrowed' && coBorrowed.length ? html`
                                     <ul class="grid gap-1">
-                                        ${coBorrowed.map(loan => render.loanProcess(loan))}
+                                        ${coBorrowed.map(loan => render.loan(loan))}
                                     </ul> 
                                 `: html``}
                                 ${view === 'lent' && lent.length ? html`
                                     <ul class="grid gap-1">
-                                        ${lent.map(loan => render.loanProcess(loan))}
+                                        ${lent.map(loan => render.loan(loan))}
                                     </ul> 
                                 `: html``}
                                 ${view === 'lend' ? html`
