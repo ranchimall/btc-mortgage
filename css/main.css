@@ -794,6 +794,7 @@ h3 {
   position: relative;
   padding-bottom: 0.5rem;
   color: rgba(var(--text-color), 0.8);
+  margin-right: auto;
 }
 .loan-process__type::before {
   content: "";
