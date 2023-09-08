@@ -154,9 +154,6 @@ button:disabled {
 a:any-link:focus-visible {
   outline: rgba(var(--text-color), 1) 0.1rem solid;
 }
-details {
-  padding: 1rem 0;
-}
 
 details summary {
   display: flex;
@@ -732,10 +729,25 @@ h3 {
 }
 .loan {
   display: grid;
-  gap: 1rem;
+  gap: 1.5rem;
   background-color: rgba(var(--foreground-color), 1);
   padding: max(1rem, 1.5vw);
   border-radius: 0.5rem;
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 500;
+    font-size: 0.9rem;
+    box-shadow: 0 0.3rem 0.5rem rgba(0, 0, 0, 0.1);
+    padding: 0.8rem;
+    border-radius: 0.5rem;
+    margin-right: auto;
+    border: solid thin rgba(var(--text-color), 0.2);
+    .icon {
+      fill: var(--accent-color);
+    }
+  }
 }
 .loan-process {
   display: grid;
