@@ -120,7 +120,7 @@
             uiGlobals.connectionErrorNotification.push(notify('There seems to be a problem connecting to the internet, Please check you internet connection.', 'error'))
         })
         window.addEventListener('online', () => {
-            uiGlobals.connectionErrorNotification.forEach(notification => notification.remove())
+            uiGlobals.connectionErrorNotification.forEach(notification => getRef("notification_drawer").remove(notification))
             notify('We are back online.', 'success')
             location.reload()
             uiGlobals.connectionErrorNotification = []
