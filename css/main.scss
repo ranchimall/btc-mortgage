@@ -779,6 +779,11 @@ h3 {
       display: grid;
       gap: 1rem;
       grid-template-columns: auto 1fr;
+      &:not(:last-of-type) {
+        .details {
+          padding-bottom: 2rem;
+        }
+      }
     }
   }
   .progress {
@@ -817,7 +822,6 @@ h3 {
   .details {
     display: grid;
     gap: 0.3rem;
-    padding-bottom: 2rem;
     button {
       margin-top: 0.5rem;
     }

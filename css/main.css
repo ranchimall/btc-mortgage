@@ -826,6 +826,9 @@ h3 {
   gap: 1rem;
   grid-template-columns: auto 1fr;
 }
+.loan-process ul li:not(:last-of-type) .details {
+  padding-bottom: 2rem;
+}
 .loan-process .progress {
   display: grid;
   justify-content: center;
@@ -860,7 +863,6 @@ h3 {
 .loan-process .details {
   display: grid;
   gap: 0.3rem;
-  padding-bottom: 2rem;
 }
 .loan-process .details button {
   margin-top: 0.5rem;

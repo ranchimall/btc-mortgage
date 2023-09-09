@@ -1525,10 +1525,12 @@
                     return html`
                         <section class="grid gap-1">
                             <sm-chips onchange=${handleChange}>
-                                <sm-chip value="in-process" selected=${view === 'in-process'}>
-                                    In process
-                                    ${loanRequestsInProcess.length ? html`<span class="badge">${loanRequestsInProcess.length}</span>` : ''}
-                                </sm-chip>
+                                ${loanRequestsInProcess.length ? html`
+                                    <sm-chip value="in-process" selected=${view === 'in-process'}>
+                                        In process
+                                        <span class="badge">${loanRequestsInProcess.length}</span>
+                                    </sm-chip>
+                                ` : ''}
                                 <sm-chip value="my-loans" selected=${view === 'my-loans'}>
                                     My loans
                                     ${borrowed.length ? html`<span class="badge">${borrowed.length}</span>` : ''}
