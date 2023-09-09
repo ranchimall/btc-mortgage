@@ -12,7 +12,7 @@
     const CURRENCY = "rupee";
     const ALLOWED_DEVIATION = 0.98, //ie, upto 2% of decrease in rate can be accepted in processing stage
         WAIT_TIME = 24 * 60 * 60 * 1000;//24 hrs
-    const PERIOD_REGEX = /^\d{1,5}(Y|M|D)$/,
+    const PERIOD_REGEX = /^[1-9]\d{0,4}(Y|M|D)$/,
         TXID_REGEX = /^[0-9a-f]{64}$/i,
         PERCENT_REGEX = /^(100|\d{1,2}(\.\d{1,8})?)$/,
         VALUE_REGEX = /^\d+(\.\d{1,8})?$/;
@@ -83,10 +83,6 @@
 
     }
 
-    const dateFormat = (date = null) => {
-        let d = (date ? new Date(date) : new Date()).toDateString();
-        return [d.substring(8, 10), d.substring(4, 7), d.substring(11, 15)].join(" ");
-    }
     const yearDiff = (d1 = null, d2 = null) => {
         d1 = d1 ? new Date(d1) : new Date();
         d2 = d2 ? new Date(d2) : new Date();
@@ -94,20 +90,6 @@
             m = d1.getMonth() - d2.getMonth(),
             d = d1.getDate() - d2.getDate()
         return y + m / 12 + d / 365;
-    }
-
-    const dateAdder = function (start_date, duration) {
-        let date = new Date(start_date);
-        let y = parseInt(duration.match(/\d+Y/)),
-            m = parseInt(duration.match(/\d+M/)),
-            d = parseInt(duration.match(/\d+D/));
-        if (!isNaN(y))
-            date.setFullYear(date.getFullYear() + y);
-        if (!isNaN(m))
-            date.setMonth(date.getMonth() + m);
-        if (!isNaN(d))
-            date.setDate(date.getDate() + d);
-        return date;
     }
 
     function calcAllowedLoan(collateralQuantity, loan_collateral_ratio) {

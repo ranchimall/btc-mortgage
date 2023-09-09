@@ -1144,6 +1144,22 @@
                             `
                     }
                 }
+                const isLoanOverdue = Date.now() > (open_time + decodeDateStringToMilliseconds(btcMortgage.policies[policy_id]?.duration)) && loanStatus === 'Active';
+                const [isClaimingCollateral, setIsClaimingCollateral] = useState(false)
+                async function claimCollateral() {
+                    const confirmation = await getConfirmation('Claim collateral?', { message: `Your claim request will be handled by our banker within 48hrs. Continue?`, confirmText: 'Claim', cancelText: 'Cancel' })
+                    if (!confirmation)
+                        return;
+                    setIsClaimingCollateral(true)
+                    try {
+                        await btcMortgage.requestBanker.liquateCollateral(loan_id, await floDapps.user.private)
+                        notify('Collateral claim request sent successfully', 'success')
+                    } catch (err) {
+                        notify(err, 'error')
+                    } finally {
+                        setIsClaimingCollateral(false)
+                    }
+                }
                 return html`
                     <li class="loan">
                         ${loanStatusBadge}
@@ -1176,7 +1192,12 @@
                                     <p>Closing date</p>
                                     <b>${getFormattedTime(close_time)}</b>
                                 </div> 
-                            `: ``}
+                            `: html`
+                                <div class="grid gap-0-3">
+                                    <p>Loan deadline</p>
+                                    <b>${getFormattedTime(open_time + decodeDateStringToMilliseconds(btcMortgage.policies[policy_id]?.duration))}</b>
+                                </div>
+                            `}
                         </div>
                         <div class="grid gap-0-3">
                             <p>Interest ${isLender ? 'earned' : close_time ? 'paid' : 'accrued'}</p>
@@ -1216,6 +1237,22 @@
                                         <sm-spinner class="margin-left-0-5"></sm-spinner>
                                     `: html`
                                         Repay loan
+                                    `}
+                                </button>
+                            </div>    
+                        `: ''}
+                        ${isLender && isLoanOverdue ? html`
+                            <div class="flex align-center space-between gap-1-5">
+                                <div class="grid gap-0-3">
+                                    <h4>Loan repayment overdue</h4>
+                                    <p>Borrower has not repaid the loan even after the deadline. You can now claim the collateral.</p>
+                                </div>
+                                <button class="button button--primary margin-left-auto" disabled=${isClaimingCollateral} onclick=${claimCollateral}>
+                                    ${isClaimingCollateral ? html`
+                                        Claiming collateral
+                                        <sm-spinner class="margin-left-0-5"></sm-spinner>
+                                    `: html`
+                                        Claim collateral
                                     `}
                                 </button>
                             </div>    
@@ -1499,7 +1536,11 @@
             } else {
                 // user homepage
                 const inbox = Component(() => {
-                    const loanRequestsInProcess = groupLoanProcess()
+                    const loanRequestsInProcess = Object.values(floGlobals.inProcessRequests).sort((a, b) => {
+                        const aTime = a.initiationTime || a.loanResponseTime || a.loanClosedAckTime || a.unlockCollateralRequestTime;
+                        const bTime = b.initiationTime || b.loanResponseTime || b.loanClosedAckTime || b.unlockCollateralRequestTime;
+                        return bTime - aTime
+                    })
                     const { borrowed, coBorrowed, lent } = groupLoans()
                     const [view, setView] = useState(section)
                     let loanRequests = [];
@@ -1618,188 +1659,6 @@
         router.addRoute('', renderHome)
         router.addRoute('home', renderHome)
 
-        function groupLoanProcess() {
-            let myLoanRequests = {}
-            for (const key in floGlobals.loanRequests) {
-                const { message: { borrower } } = floGlobals.loanRequests[key]
-                if (floCrypto.isSameAddr(borrower, floGlobals.myFloID)) {
-                    myLoanRequests[key] = floGlobals.loanRequests[key]
-                }
-            }
-            const allMessages = {
-                ...floGlobals.myInbox,
-                ...myLoanRequests,
-                ...floGlobals.myOutbox
-            }
-            const loansInProcess = {}
-            const processedRequests = new Set()
-            for (const key in allMessages) {
-                const {
-                    message: {
-                        borrower, coborrower, lender,
-                        loan_amount, policy_id, loan_opening_process_id, loan_request_id, collateral_lock_id,
-                        loan_id, closing_txid, unlock_tx_hex, unlock_collateral_id, type_unlock_collateral_ack
-                    } = {},
-                    type, time
-                } = allMessages[key];
-                if (processedRequests.has(loan_opening_process_id) || Object.values(btcMortgage.loans).find(loan => loan.loan_opening_process_id === loan_opening_process_id)) {
-                    processedRequests.add(loan_opening_process_id)
-                    continue // Request has been processed
-                }
-                if (loan_id && btcMortgage.loans[loan_id] && btcMortgage.loans[loan_id].close_time)
-                    continue // Loan closed
-                if (loan_opening_process_id) {
-                    if (!loansInProcess[loan_opening_process_id]) {
-                        loansInProcess[loan_opening_process_id] = {
-                            loanOpeningProcessID: loan_opening_process_id,
-                            hasProvidedCollateral: false,
-                            hasAgreedToLend: false,
-                            hasLockedCollateral: false,
-                            type: 'loanOpening'
-                        }
-                    }
-                    if (borrower) {
-                        loansInProcess[loan_opening_process_id].borrower = borrower
-                        loansInProcess[loan_opening_process_id].isBorrower = floCrypto.isSameAddr(borrower, floDapps.user.id)
-                    }
-                    if (coborrower) {
-                        loansInProcess[loan_opening_process_id].coborrower = coborrower
-                        loansInProcess[loan_opening_process_id].isCoborrower = floCrypto.isSameAddr(coborrower, floDapps.user.id)
-                    }
-                    if (loan_amount) {
-                        loansInProcess[loan_opening_process_id].loanAmount = loan_amount
-                    }
-                    if (policy_id) {
-                        loansInProcess[loan_opening_process_id].policyID = policy_id
-                    }
-                    if (lender) {
-                        loansInProcess[loan_opening_process_id].lender = lender
-                        loansInProcess[loan_opening_process_id].isLender = floCrypto.isSameAddr(lender, floDapps.user.id)
-                    }
-                    if (loan_request_id) {
-                        loansInProcess[loan_opening_process_id].loanRequestID = loan_request_id
-                        loansInProcess[loan_opening_process_id].hasProvidedCollateral = true
-                    }
-                    if (collateral_lock_id) {
-                        loansInProcess[loan_opening_process_id].collateralLockID = collateral_lock_id
-                    }
-                    switch (type) {
-                        case 'type_loan_collateral_request':
-                            loansInProcess[loan_opening_process_id].initiationTime = time
-                            loansInProcess[loan_opening_process_id].collateralRequestID = key
-                            break;
-                        case 'type_loan_request':
-                            loansInProcess[loan_opening_process_id].loanRequestTime = time
-                            loansInProcess[loan_opening_process_id].hasProvidedCollateral = true
-                            loansInProcess[loan_opening_process_id].loanRequestID = key
-                            break;
-                        case 'type_loan_response':
-                            loansInProcess[loan_opening_process_id].loanResponseTime = time
-                            loansInProcess[loan_opening_process_id].hasAgreedToLend = true
-                            loansInProcess[loan_opening_process_id].loanResponseID = key
-                            break;
-                        case "type_collateral_lock_request":
-                            loansInProcess[loan_opening_process_id].collateralLockRequestTime = time
-                            loansInProcess[loan_opening_process_id].collateralLockRequestID = key
-                            loansInProcess[loan_opening_process_id].hasRequestedCollateralLock = true
-                            break;
-                        case 'type_collateral_lock_ack':
-                            loansInProcess[loan_opening_process_id].collateralLockAckTime = time
-                            loansInProcess[loan_opening_process_id].hasLockedCollateral = true
-                            loansInProcess[loan_opening_process_id].collateralLockAckID = key
-                            break;
-                        case 'type_refund_collateral_request':
-                            loansInProcess[loan_opening_process_id].refundCollateralRequestTime = time
-                            loansInProcess[loan_opening_process_id].refundCollateralRequestID = key
-                            loansInProcess[loan_opening_process_id].hasRequestedCollateralRefund = true
-                            break;
-                    }
-                } else if (closing_txid) {
-                    if (!loansInProcess[closing_txid])
-                        loansInProcess[closing_txid] = {
-                            loanID: loan_id,
-                            closingTxID: closing_txid,
-                            hasRequestedCollateralRefund: false,
-                            hasRefundedCollateral: false,
-                            hasPaidLoan: false,
-                            type: 'loanClosing'
-                        }
-                    const { borrower, coborrower, lender } = btcMortgage.loans[loan_id]
-                    if (borrower) {
-                        loansInProcess[closing_txid].borrower = borrower
-                        loansInProcess[closing_txid].isBorrower = floCrypto.isSameAddr(borrower, floDapps.user.id)
-                    }
-                    if (coborrower) {
-                        loansInProcess[closing_txid].coborrower = coborrower
-                        loansInProcess[closing_txid].isCoborrower = floCrypto.isSameAddr(coborrower, floDapps.user.id)
-                    }
-                    if (lender) {
-                        loansInProcess[closing_txid].lender = lender
-                        loansInProcess[closing_txid].isLender = floCrypto.isSameAddr(lender, floDapps.user.id)
-                    }
-                    if (unlock_tx_hex) {
-                        loansInProcess[closing_txid].unlockTxHex = unlock_tx_hex
-                    }
-                    switch (type) {
-                        case 'type_loan_closed_ack':
-                            loansInProcess[closing_txid].loanClosedAckTime = time
-                            loansInProcess[closing_txid].loanClosedAckID = key
-                            loansInProcess[closing_txid].hasPaidLoan = true
-                            break;
-                        case 'type_unlock_collateral_request':
-                            loansInProcess[closing_txid].unlockCollateralRequestTime = time
-                            loansInProcess[closing_txid].unlockCollateralRequestID = key
-                            loansInProcess[closing_txid].hasRequestedCollateralUnlock = true
-                            break;
-                        case 'type_unlock_collateral_ack':
-                            loansInProcess[closing_txid].unlockCollateralAckTime = time
-                            loansInProcess[closing_txid].unlockCollateralAckID = key
-                            loansInProcess[closing_txid].hasRefundedCollateral = true
-                            break;
-                    }
-                }
-            }
-            // sort by time
-            return Object.values(loansInProcess).sort((a, b) => {
-                const aTime = a.initiationTime || a.loanResponseTime || a.loanClosedAckTime || a.unlockCollateralRequestTime;
-                const bTime = b.initiationTime || b.loanResponseTime || b.loanClosedAckTime || b.unlockCollateralRequestTime;
-                return bTime - aTime
-            })
-            // .reduce((acc, loan) => { // group by borrower, coborrower and lender
-            //     if (loan.isBorrower)
-            //         acc.borrowing.push(loan)
-            //     else if (loan.isCoborrower)
-            //         acc.coBorrowing.push(loan)
-            //     else if (loan.isLender)
-            //         acc.lending.push(loan)
-            //     return acc
-            // }, {
-            //     borrowing: [],
-            //     coBorrowing: [],
-            //     lending: []
-            // })
-        }
-
-        function groupLoans() {
-            console.log(btcMortgage.loans)
-            return Object.values(btcMortgage.loans)
-                .sort((a, b) => b.open_time - a.open_time)
-                .reduce((acc, loan) => {
-                    const { loan_id, borrower, coborrower, lender } = loan
-                    if (floCrypto.isSameAddr(borrower, floDapps.user.id) && floCrypto.isSameAddr(coborrower, floDapps.user.id))
-                        acc.borrowed.push(loan_id)
-                    else if (floCrypto.isSameAddr(coborrower, floDapps.user.id))
-                        acc.coBorrowed.push(loan_id)
-                    else if (floCrypto.isSameAddr(lender, floDapps.user.id))
-                        acc.lent.push(loan_id)
-                    return acc
-                }, {
-                    borrowed: [],
-                    coBorrowed: [],
-                    lent: []
-                })
-        }
-
         router.addRoute('apply-loan', async () => {
             const loanApplication = Component(() => {
                 return html`
@@ -1917,6 +1776,7 @@
                                         }
                                     }
                                     console.log('LOAN REQUESTS', d)
+                                    processInProcessRequests()
                                     if (floGlobals.loaded) {
                                         router.routeTo(window.location.hash)
                                     }
@@ -1932,6 +1792,7 @@
                                             ...d
                                         }
                                         console.log('MY INBOX', d)
+                                        processInProcessRequests()
                                         if (floGlobals.loaded) {
                                             router.routeTo(window.location.hash)
                                         }
@@ -1948,6 +1809,7 @@
                                             ...d
                                         }
                                         console.log('LOAN REQUESTS', d)
+                                        processInProcessRequests()
                                         if (floGlobals.loaded) {
                                             router.routeTo(window.location.hash)
                                         }
@@ -1962,6 +1824,7 @@
                                             if (e) return
                                             parseInProcessRequests(d)
                                             console.log('IN PROCESS LOAN REQUEST', d)
+                                            processInProcessRequests()
                                             if (floGlobals.loaded) {
                                                 router.routeTo(window.location.hash)
                                             }
@@ -1984,6 +1847,7 @@
                                             ...d
                                         }
                                         console.log('MY OUTBOX', d)
+                                        processInProcessRequests()
                                         if (floGlobals.loaded) {
                                             router.routeTo(window.location.hash)
                                         }
@@ -1993,6 +1857,7 @@
                             })
                         }))
                         console.log(result)
+                        processInProcessRequests()
                         if (['#/landing', '#/sign_in', '#/sign_up'].includes(window.location.hash)) {
                             history.replaceState(null, null, '#/home')
                             router.routeTo('home')
@@ -2039,6 +1904,198 @@
             if (addresses.has(floGlobals.myBtcID))
                 addresses.delete(floGlobals.myBtcID)
             return addresses
+        }
+        function decodeDateStringToMilliseconds(inputString) {
+            // Define a mapping for units to milliseconds (Y: years, M: months, D: days)
+            const unitToMilliseconds = {
+                Y: 31536000000, // 1 year = 365 days
+                M: 2592000000,  // 1 month = 30 days (approximate)
+                D: 86400000     // 1 day = 24 hours
+            };
+
+            // Use a regular expression to match and capture the numeric part and unit
+            const match = inputString.match(/^([1-9]\d{0,4})(Y|M|D)$/);
+
+            if (match) {
+                const numericPart = parseInt(match[1], 10);
+                const unit = match[2];
+
+                if (unitToMilliseconds.hasOwnProperty(unit)) {
+                    // Convert the numeric part to milliseconds using the unit
+                    const milliseconds = numericPart * unitToMilliseconds[unit];
+                    return milliseconds;
+                }
+            }
+
+            // Return null for invalid input
+            return null;
+        }
+
+        const processedRequests = new Set()
+        floGlobals.inProcessRequests = {}
+        function processInProcessRequests() {
+            let myLoanRequests = {}
+            for (const key in floGlobals.loanRequests) {
+                const { message: { borrower } } = floGlobals.loanRequests[key]
+                if (floCrypto.isSameAddr(borrower, floGlobals.myFloID)) {
+                    myLoanRequests[key] = floGlobals.loanRequests[key]
+                }
+            }
+            const allMessages = {
+                ...floGlobals.myInbox,
+                ...myLoanRequests,
+                ...floGlobals.myOutbox
+            }
+            for (const key in allMessages) {
+                const {
+                    message: {
+                        borrower, coborrower, lender,
+                        loan_amount, policy_id, loan_opening_process_id, loan_request_id, collateral_lock_id,
+                        loan_id, closing_txid, unlock_tx_hex, unlock_collateral_id, type_unlock_collateral_ack
+                    } = {},
+                    type, time
+                } = allMessages[key];
+                if (processedRequests.has(loan_opening_process_id) || Object.values(btcMortgage.loans).find(loan => loan.loan_opening_process_id === loan_opening_process_id)) {
+                    processedRequests.add(loan_opening_process_id)
+                    continue // Request has been processed
+                }
+                if (loan_id && btcMortgage.loans[loan_id] && btcMortgage.loans[loan_id].close_time)
+                    continue // Loan closed
+                if (loan_opening_process_id) {
+                    if (!floGlobals.inProcessRequests[loan_opening_process_id]) {
+                        floGlobals.inProcessRequests[loan_opening_process_id] = {
+                            loanOpeningProcessID: loan_opening_process_id,
+                            hasProvidedCollateral: false,
+                            hasAgreedToLend: false,
+                            hasLockedCollateral: false,
+                            type: 'loanOpening'
+                        }
+                    }
+                    if (borrower) {
+                        floGlobals.inProcessRequests[loan_opening_process_id].borrower = borrower
+                        floGlobals.inProcessRequests[loan_opening_process_id].isBorrower = floCrypto.isSameAddr(borrower, floDapps.user.id)
+                    }
+                    if (coborrower) {
+                        floGlobals.inProcessRequests[loan_opening_process_id].coborrower = coborrower
+                        floGlobals.inProcessRequests[loan_opening_process_id].isCoborrower = floCrypto.isSameAddr(coborrower, floDapps.user.id)
+                    }
+                    if (loan_amount) {
+                        floGlobals.inProcessRequests[loan_opening_process_id].loanAmount = loan_amount
+                    }
+                    if (policy_id) {
+                        floGlobals.inProcessRequests[loan_opening_process_id].policyID = policy_id
+                    }
+                    if (lender) {
+                        floGlobals.inProcessRequests[loan_opening_process_id].lender = lender
+                        floGlobals.inProcessRequests[loan_opening_process_id].isLender = floCrypto.isSameAddr(lender, floDapps.user.id)
+                    }
+                    if (loan_request_id) {
+                        floGlobals.inProcessRequests[loan_opening_process_id].loanRequestID = loan_request_id
+                        floGlobals.inProcessRequests[loan_opening_process_id].hasProvidedCollateral = true
+                    }
+                    if (collateral_lock_id) {
+                        floGlobals.inProcessRequests[loan_opening_process_id].collateralLockID = collateral_lock_id
+                    }
+                    switch (type) {
+                        case 'type_loan_collateral_request':
+                            floGlobals.inProcessRequests[loan_opening_process_id].initiationTime = time
+                            floGlobals.inProcessRequests[loan_opening_process_id].collateralRequestID = key
+                            break;
+                        case 'type_loan_request':
+                            floGlobals.inProcessRequests[loan_opening_process_id].hasProvidedCollateral = true
+                            floGlobals.inProcessRequests[loan_opening_process_id].loanRequestID = key
+                            break;
+                        case 'type_loan_response':
+                            floGlobals.inProcessRequests[loan_opening_process_id].loanResponseTime = time
+                            floGlobals.inProcessRequests[loan_opening_process_id].hasAgreedToLend = true
+                            floGlobals.inProcessRequests[loan_opening_process_id].loanResponseID = key
+                            break;
+                        case "type_collateral_lock_request":
+                            floGlobals.inProcessRequests[loan_opening_process_id].collateralLockRequestID = key
+                            break;
+                        case 'type_collateral_lock_ack':
+                            floGlobals.inProcessRequests[loan_opening_process_id].collateralLockAckTime = time
+                            floGlobals.inProcessRequests[loan_opening_process_id].hasLockedCollateral = true
+                            floGlobals.inProcessRequests[loan_opening_process_id].collateralLockAckID = key
+                            break;
+                        case 'type_refund_collateral_request':
+                            floGlobals.inProcessRequests[loan_opening_process_id].hasRequestedCollateralRefund = true
+                            break;
+                    }
+                } else if (closing_txid) {
+                    if (!floGlobals.inProcessRequests[closing_txid])
+                        floGlobals.inProcessRequests[closing_txid] = {
+                            loanID: loan_id,
+                            closingTxID: closing_txid,
+                            hasRequestedCollateralRefund: false,
+                            hasRefundedCollateral: false,
+                            hasPaidLoan: false,
+                            type: 'loanClosing'
+                        }
+                    const { borrower, coborrower, lender } = btcMortgage.loans[loan_id]
+                    if (borrower) {
+                        floGlobals.inProcessRequests[closing_txid].borrower = borrower
+                        floGlobals.inProcessRequests[closing_txid].isBorrower = floCrypto.isSameAddr(borrower, floDapps.user.id)
+                    }
+                    if (coborrower) {
+                        floGlobals.inProcessRequests[closing_txid].coborrower = coborrower
+                        floGlobals.inProcessRequests[closing_txid].isCoborrower = floCrypto.isSameAddr(coborrower, floDapps.user.id)
+                    }
+                    if (lender) {
+                        floGlobals.inProcessRequests[closing_txid].lender = lender
+                        floGlobals.inProcessRequests[closing_txid].isLender = floCrypto.isSameAddr(lender, floDapps.user.id)
+                    }
+                    if (unlock_tx_hex) {
+                        floGlobals.inProcessRequests[closing_txid].unlockTxHex = unlock_tx_hex
+                    }
+                    switch (type) {
+                        case 'type_loan_closed_ack':
+                            floGlobals.inProcessRequests[closing_txid].loanClosedAckTime = time
+                            floGlobals.inProcessRequests[closing_txid].hasPaidLoan = true
+                            break;
+                        case 'type_unlock_collateral_request':
+                            floGlobals.inProcessRequests[closing_txid].unlockCollateralRequestTime = time
+                            floGlobals.inProcessRequests[closing_txid].hasRequestedCollateralUnlock = true
+                            break;
+                        case 'type_unlock_collateral_ack':
+                            floGlobals.inProcessRequests[closing_txid].unlockCollateralAckTime = time
+                            floGlobals.inProcessRequests[closing_txid].hasRefundedCollateral = true
+                            break;
+                    }
+                }
+            }
+            // .reduce((acc, loan) => { // group by borrower, coborrower and lender
+            //     if (loan.isBorrower)
+            //         acc.borrowing.push(loan)
+            //     else if (loan.isCoborrower)
+            //         acc.coBorrowing.push(loan)
+            //     else if (loan.isLender)
+            //         acc.lending.push(loan)
+            //     return acc
+            // }, {
+            //     borrowing: [],
+            //     coBorrowing: [],
+            //     lending: []
+            // })
+        }
+
+        function groupLoans() {
+            return Object.values(btcMortgage.loans)
+                .sort((a, b) => b.open_time - a.open_time)
+                .reduce((acc, loan) => {
+                    const { loan_id, borrower, coborrower, lender } = loan
+                    if (floCrypto.isSameAddr(borrower, floDapps.user.id) && floCrypto.isSameAddr(coborrower, floDapps.user.id))
+                        acc.borrowed.push(loan_id)
+                    else if (floCrypto.isSameAddr(coborrower, floDapps.user.id))
+                        acc.coBorrowed.push(loan_id)
+                    else if (floCrypto.isSameAddr(lender, floDapps.user.id))
+                        acc.lent.push(loan_id)
+                    return acc
+                }, {
+                    borrowed: [],
+                    coBorrowed: [],
+                    lent: []
+                })
         }
     </script>
 </body>
