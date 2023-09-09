@@ -666,19 +666,19 @@ h3 {
 }
 #balance_list {
   display: flex;
-  flex-wrap: wrap;
   justify-items: flex-start;
   gap: 0.5rem;
 }
 .balance-card {
   display: flex;
-  flex: 1 1 12rem;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
   padding: 0.7rem;
   border-radius: 0.5rem;
   background-color: rgba(var(--foreground-color), 1);
-  span:last-of-type {
-    font-weight: 700;
+  & > span:last-of-type {
+    font-weight: 500;
     font-size: 1rem;
   }
 }
@@ -872,6 +872,15 @@ h3 {
     flex: 1;
     order: 1;
   }
+  #balance_list {
+    overflow-x: auto;
+    margin: 0 -1rem;
+    padding: 0 1rem;
+  }
+  .balance-card {
+    flex: 1 1 12rem;
+    min-width: 42vw;
+  }
   .hide-on-small {
     display: none !important;
   }
@@ -886,6 +895,9 @@ h3 {
   }
   .popup__header {
     padding: 1.5rem 1.5rem 0 0.75rem;
+  }
+  #balance_list {
+    flex-wrap: wrap;
   }
   #request_loan_popup {
     --width: 32rem;
