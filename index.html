@@ -643,7 +643,7 @@
                         `: html``}
                 `
             },
-            loanProcess(details = {}) {
+            loanProcess(processId) {
                 const {
                     type,
                     loanOpeningProcessID,
@@ -653,7 +653,7 @@
                     collateralRequestID, loanResponseID, collateralLockRequestID, collateralLockAckID, loanID, closingTxID,
                     unlockCollateralRequestTime, hasRequestedCollateralUnlock, unlockCollateralAckTime, hasRefundedCollateral,
                     unlockTxHex
-                } = details
+                } = uiGlobals.inProcessRequests[processId]
                 if (type === 'loanOpening') {
                     return Component(() => {
                         const [verifyingCollateral, setVerifyCollateral] = useState(false)
@@ -1086,6 +1086,8 @@
                     lender, lender_sign, loan_amount, loan_id, loan_opening_process_id, loan_transfer_id,
                     open_time, close_time, policy_id } = btcMortgage.loans[loanID];
 
+                const { hasRepaidLoan, hasRefundedCollateral, collateralUnlockAckTime, hasRequestedCollateralLiquidation, hasRequestedCollateralPreLiquidation } = uiGlobals.activeLoanQueries[loanID] || {}
+
                 const amountDue = btcMortgage.util.calcDueAmount(loan_amount, policy_id, open_time)
                 const [isRepayingLoan, setIsRepayingLoan] = useState(false)
                 async function initLoanRepayment() {
@@ -1109,10 +1111,9 @@
                 const isBorrower = floCrypto.isSameAddr(borrower, floDapps.user.id)
                 const isCoborrower = floCrypto.isSameAddr(coborrower, floDapps.user.id)
                 const isLender = floCrypto.isSameAddr(lender, floDapps.user.id)
-                let hasStartedRepayment = false
                 let loanStatus = '';
                 let loanStatusBadge = '';
-                if (close_time) {
+                if (close_time || hasRefundedCollateral) {
                     loanStatus = 'Closed'
                     loanStatusBadge = html`
                         <div class="status">
@@ -1121,12 +1122,7 @@
                         </div>    
                         `
                 } else {
-                    hasStartedRepayment = Object.values({
-                        ...floGlobals.myInbox,
-                        ...floGlobals.myOutbox
-                    })
-                        .find(request => request.message.loan_id === loanID)
-                    if (hasStartedRepayment) {
+                    if (hasRepaidLoan) {
                         loanStatus = 'Repaying'
                         loanStatusBadge = html`
                             <div class="status">
@@ -1160,6 +1156,22 @@
                         setIsClaimingCollateral(false)
                     }
                 }
+                const hasGoneBelowThreshold = btcMortgage.util.calcRateRatio(floGlobals.btcRate, btcMortgage.policies[policy_id]?.pre_liquidation_threshold) || false;
+                const [isRequestingCollateralPreLiquidation, setIsRequestingCollateralPreLiquidation] = useState(false)
+                async function requestCollateralPreLiquidation() {
+                    const confirmation = await getConfirmation('Request collateral pre-liquidation?', { message: `You are about to request for collateral pre-liquidation. Continue?`, confirmText: 'Request', cancelText: 'Cancel' })
+                    if (!confirmation)
+                        return;
+                    setIsRequestingCollateralPreLiquidation(true)
+                    try {
+                        await btcMortgage.requestBanker.preLiquidateCollateral(loan_id, await floDapps.user.private)
+                        notify('Collateral pre-liquidation request sent successfully', 'success')
+                    } catch (err) {
+                        notify(err, 'error')
+                    } finally {
+                        setIsRequestingCollateralPreLiquidation(false)
+                    }
+                }
                 return html`
                     <li class="loan">
                         ${loanStatusBadge}
@@ -1167,40 +1179,44 @@
                             <p>Loan ID: ${loan_id}</p>
                         </sm-copy>
                         <div class="flex flex-wrap gap-1-5 align-items-start">
-                            <div class="grid gap-0-3">
-                                <p>Loan amount</p>
-                                <b>${formatAmount(loan_amount, 'usd')}</b>
-                            </div>
-                            <div class="grid gap-0-3">
-                                <p>Collateral amount</p>
-                                <b>${formatAmount(collateral_value)}</b>
-                            </div>
-                            <div class="grid gap-0-3">
-                                <p>Duration</p>
-                                <b>${btcMortgage.policies[policy_id]?.duration}</b>
-                            </div>
-                            <div class="grid gap-0-3">
-                                <p>Interest</p>
-                                <b>${btcMortgage.policies[policy_id]?.interest * 100}% p.a</b>  
-                            </div>
-                            <div class="grid gap-0-3">
-                                <p>Opening date</p>
-                                <b>${getFormattedTime(open_time)}</b>
-                            </div>
-                            ${close_time ? html`
+                            <div class="flex flex-wrap gap-1-5 align-items-start">
                                 <div class="grid gap-0-3">
-                                    <p>Closing date</p>
-                                    <b>${getFormattedTime(close_time)}</b>
-                                </div> 
-                            `: html`
-                                <div class="grid gap-0-3">
-                                    <p>Loan deadline</p>
-                                    <b>${getFormattedTime(open_time + decodeDateStringToMilliseconds(btcMortgage.policies[policy_id]?.duration))}</b>
+                                    <p>Loan amount</p>
+                                    <b>${formatAmount(loan_amount, 'usd')}</b>
                                 </div>
-                            `}
+                                <div class="grid gap-0-3">
+                                    <p>Collateral amount</p>
+                                    <b>${formatAmount(collateral_value)}</b>
+                                </div>
+                                <div class="grid gap-0-3">
+                                    <p>Duration</p>
+                                    <b>${btcMortgage.policies[policy_id]?.duration}</b>
+                                </div>
+                                <div class="grid gap-0-3">
+                                    <p>Interest</p>
+                                    <b>${btcMortgage.policies[policy_id]?.interest * 100}% p.a</b>  
+                                </div>
+                            </div>
+                            <div class="flex flex-wrap gap-1-5 align-items-start">
+                                <div class="grid gap-0-3">
+                                    <p>Opening date</p>
+                                    <b>${getFormattedTime(open_time)}</b>
+                                </div>
+                                ${loanStatus === 'Closed' ? html`
+                                    <div class="grid gap-0-3">
+                                        <p>Closing date</p>
+                                        <b>${getFormattedTime(close_time || collateralUnlockAckTime)}</b>
+                                    </div> 
+                                `: html`
+                                    <div class="grid gap-0-3">
+                                        <p>Loan deadline</p>
+                                        <b>${getFormattedTime(open_time + decodeDateStringToMilliseconds(btcMortgage.policies[policy_id]?.duration))}</b>
+                                    </div>
+                                `}
+                            </div>    
                         </div>
                         <div class="grid gap-0-3">
-                            <p>Interest ${isLender ? 'earned' : close_time ? 'paid' : 'accrued'}</p>
+                            <p>Interest ${isLender ? 'earned' : loanStatus === 'Closed' ? 'paid' : 'accrued'}</p>
                             <b style=${`color: ${isLender ? 'var(--green)' : 'var(--danger-color)'}`}>${formatAmount(amountDue - loan_amount, 'usd')}</b>
                         </div>
                         <details>
@@ -1241,20 +1257,27 @@
                                 </button>
                             </div>    
                         `: ''}
-                        ${isLender && isLoanOverdue ? html`
+                        ${loanStatus === 'closed' && isLender && isLoanOverdue ? html`
                             <div class="flex align-center space-between gap-1-5">
-                                <div class="grid gap-0-3">
-                                    <h4>Loan repayment overdue</h4>
-                                    <p>Borrower has not repaid the loan even after the deadline. You can now claim the collateral.</p>
-                                </div>
-                                <button class="button button--primary margin-left-auto" disabled=${isClaimingCollateral} onclick=${claimCollateral}>
-                                    ${isClaimingCollateral ? html`
-                                        Claiming collateral
-                                        <sm-spinner class="margin-left-0-5"></sm-spinner>
-                                    `: html`
-                                        Claim collateral
-                                    `}
-                                </button>
+                                ${hasRequestedCollateralLiquidation ? html`
+                                    <div class="grid gap-0-3">
+                                        <h4>Collateral liquidation requested</h4>
+                                        <p>Our banker will resolve your request within 48hrs.</p>
+                                    </div>
+                                `: html`
+                                    <div class="grid gap-0-3">
+                                        <h4>Loan repayment overdue</h4>
+                                        <p>Borrower has not repaid the loan even after the deadline. You can now claim the collateral.</p>
+                                    </div>
+                                    <button class="button button--primary margin-left-auto" disabled=${isClaimingCollateral} onclick=${claimCollateral}>
+                                        ${isClaimingCollateral ? html`
+                                            Claiming collateral
+                                            <sm-spinner class="margin-left-0-5"></sm-spinner>
+                                        `: html`
+                                            Claim collateral
+                                        `}
+                                    </button>
+                                `}
                             </div>    
                         `: ''}
                     </li>
@@ -1421,7 +1444,7 @@
         }
         let userAddressTimeInterval;
         function renderHome(appState) {
-            const { lastPage, page, params: { } = {}, wildcards: [section = 'my-loans'] = [] } = appState || {};
+            const { lastPage, page, params: { } = {}, wildcards = [] } = appState || {};
 
             const balanceCard = Component(() => {
                 const [btcBalance, setBtcBalance] = useState(floGlobals.memoBalance['BTC'])
@@ -1505,7 +1528,7 @@
                             case 'type_liquate_collateral_request':
 
                                 break;
-                            case 'type_preliquate_collateral_request':
+                            case 'type_pre_liquidate_collateral_request':
 
                                 break;
                             default:
@@ -1536,18 +1559,14 @@
             } else {
                 // user homepage
                 const inbox = Component(() => {
-                    const loanRequestsInProcess = Object.values(floGlobals.inProcessRequests).sort((a, b) => {
-                        const aTime = a.initiationTime || a.loanResponseTime || a.loanClosedAckTime || a.unlockCollateralRequestTime;
-                        const bTime = b.initiationTime || b.loanResponseTime || b.loanClosedAckTime || b.unlockCollateralRequestTime;
-                        return bTime - aTime
-                    })
                     const { borrowed, coBorrowed, lent } = groupLoans()
-                    const [view, setView] = useState(section)
+                    const defaultView = wildcards.length ? wildcards[0] : uiGlobals.sortedProcesses.length ? 'in-process' : 'my-loans'
+                    const [view, setView] = useState(defaultView)
                     let loanRequests = [];
                     for (const key in floGlobals.loanRequests) {
                         const { message: { borrower, coborrower, loan_opening_process_id } } = floGlobals.loanRequests[key]
                         if (!loan_opening_process_id) continue // TODO: remove this check after all requests are updated
-                        if (floGlobals.loansOpeningInProcess.has(loan_opening_process_id)) continue // if loan request is in process, don't show loan request
+                        if (floGlobals.hasAgreedToLend.has(loan_opening_process_id)) continue // if user has already agreed to lend, don't show the request
                         loanRequests.push(key)
                     }
                     function handleChange(e) {
@@ -1566,10 +1585,10 @@
                     return html`
                         <section class="grid gap-1">
                             <sm-chips onchange=${handleChange}>
-                                ${loanRequestsInProcess.length ? html`
+                                ${uiGlobals.sortedProcesses.length ? html`
                                     <sm-chip value="in-process" selected=${view === 'in-process'}>
                                         In process
-                                        <span class="badge">${loanRequestsInProcess.length}</span>
+                                        <span class="badge">${uiGlobals.sortedProcesses.length}</span>
                                     </sm-chip>
                                 ` : ''}
                                 <sm-chip value="my-loans" selected=${view === 'my-loans'}>
@@ -1612,9 +1631,9 @@
                                         </div>
                                     `}
                                 `: ''}
-                                ${view === 'in-process' && loanRequestsInProcess.length ? html`
+                                ${view === 'in-process' && uiGlobals.sortedProcesses.length ? html`
                                     <ul class="grid gap-1">
-                                        ${loanRequestsInProcess.map(loan => render.loanProcess(loan))}
+                                        ${uiGlobals.sortedProcesses.map(processId => render.loanProcess(processId))}
                                     </ul> 
                                 `: ''}
                                 ${view === 'coBorrowed' && coBorrowed.length ? html`
@@ -1732,10 +1751,8 @@
                 floGlobals.isSubAdmin = floGlobals.subAdmins.includes(floGlobals.myFloID)
                 floGlobals.isAdmin = floGlobals.myFloID === floGlobals.adminID
                 floGlobals.loaded = false
-                floGlobals.myInbox = {}
-                floGlobals.myOutbox = {}
                 floGlobals.loanRequests = {}
-                floGlobals.requestTypes = {}
+                uiGlobals.activeLoanQueries = {}
                 floGlobals.btcRate = 1
                 floGlobals.memoBalance = {
                     'FLO': 0,
@@ -1759,24 +1776,23 @@
                                 callback: (d, e) => {
                                     if (e) return
                                     for (const key in d) {
-                                        if (
-                                            d[key].type === 'type_unlock_collateral_request' ||
-                                            d[key].type === 'type_unlock_collateral_ack' ||
-                                            d[key].type === 'type_refund_collateral_request' ||
-                                            d[key].type === 'type_refund_collateral_ack' ||
-                                            d[key].type === 'type_liquate_collateral_request' ||
-                                            d[key].type === 'type_liquate_collateral_ack' ||
-                                            d[key].type === 'type_preliquate_collateral_request' ||
-                                            d[key].type === 'type_preliquate_collateral_ack'
-                                        ) {
-                                            floGlobals.bankerRequests = {
-                                                ...floGlobals.bankerRequests || {},
-                                                [key]: d[key]
-                                            }
+                                        switch (d[key].type) {
+                                            case 'type_unlock_collateral_request':
+                                            case 'type_unlock_collateral_ack':
+                                            case 'type_refund_collateral_request':
+                                            case 'type_refund_collateral_ack':
+                                            case 'type_liquate_collateral_request':
+                                            case 'type_liquate_collateral_ack':
+                                            case 'type_pre_liquidate_collateral_request':
+                                            case 'type_preLiquidate_collateral_ack':
+                                                floGlobals.bankerRequests = {
+                                                    ...(floGlobals.bankerRequests || {}),
+                                                    [key]: d[key]
+                                                };
+                                                break;
                                         }
                                     }
                                     console.log('LOAN REQUESTS', d)
-                                    processInProcessRequests()
                                     if (floGlobals.loaded) {
                                         router.routeTo(window.location.hash)
                                     }
@@ -1785,14 +1801,10 @@
                         } else {
                             const result = await Promise.allSettled([
                                 new Promise((resolve, reject) => {
-                                    btcMortgage.viewMyInbox((d, e) => {
+                                    btcMortgage.viewMyInbox((requests, e) => {
                                         if (e) return
-                                        floGlobals.myInbox = {
-                                            ...floGlobals.myInbox,
-                                            ...d
-                                        }
-                                        console.log('MY INBOX', d)
-                                        processInProcessRequests()
+                                        console.log('MY INBOX', requests)
+                                        processInProcessRequests(requests, { isInbox: true })
                                         if (floGlobals.loaded) {
                                             router.routeTo(window.location.hash)
                                         }
@@ -1802,14 +1814,15 @@
                                     })
                                 }),
                                 new Promise((resolve, reject) => {
-                                    btcMortgage.listLoanRequests((d, e) => {
+                                    btcMortgage.listLoanRequests((requests, e) => {
                                         if (e) return
+                                        console.log('LOAN REQUESTS', requests)
                                         floGlobals.loanRequests = {
                                             ...floGlobals.loanRequests,
-                                            ...d
+                                            ...requests
                                         }
-                                        console.log('LOAN REQUESTS', d)
-                                        processInProcessRequests()
+                                        // if loan requests are from me, process them
+                                        processInProcessRequests(requests, { areLoanRequests: true })
                                         if (floGlobals.loaded) {
                                             router.routeTo(window.location.hash)
                                         }
@@ -1820,11 +1833,10 @@
                                 }),
                                 new Promise((resolve, reject) => {
                                     floCloudAPI.requestApplicationData('in_process_loan_request', {
-                                        callback: (d, e) => {
+                                        callback: (requests, e) => {
                                             if (e) return
-                                            parseInProcessRequests(d)
-                                            console.log('IN PROCESS LOAN REQUEST', d)
-                                            processInProcessRequests()
+                                            parseInProcessRequests(requests)
+                                            console.log('IN PROCESS LOAN REQUEST', requests)
                                             if (floGlobals.loaded) {
                                                 router.routeTo(window.location.hash)
                                             }
@@ -1835,19 +1847,15 @@
                             ])
                         }
 
-                        await Promise.all([...getAllInvolvedAddresses()].map(address => {
+                        await Promise.all([...uiGlobals.relatedAddresses].map(address => {
                             return new Promise((resolve, reject) => {
                                 floCloudAPI.requestApplicationData(null, {
                                     senderID: floDapps.user.id,
                                     receiverID: address,
-                                    callback: (d, e) => {
+                                    callback: (requests, e) => {
                                         if (e) return
-                                        floGlobals.myOutbox = {
-                                            ...floGlobals.myOutbox || {},
-                                            ...d
-                                        }
-                                        console.log('MY OUTBOX', d)
-                                        processInProcessRequests()
+                                        console.log('MY OUTBOX', requests)
+                                        processInProcessRequests(requests)
                                         if (floGlobals.loaded) {
                                             router.routeTo(window.location.hash)
                                         }
@@ -1857,7 +1865,6 @@
                             })
                         }))
                         console.log(result)
-                        processInProcessRequests()
                         if (['#/landing', '#/sign_in', '#/sign_up'].includes(window.location.hash)) {
                             history.replaceState(null, null, '#/home')
                             router.routeTo('home')
@@ -1880,31 +1887,20 @@
                 })
             }).catch(error => console.error(error))
         }
+        /** 
+         * @param {Object} requests
+        */
         function parseInProcessRequests(requests) {
-            if (!floGlobals.loansOpeningInProcess)
-                floGlobals.loansOpeningInProcess = new Set()
+            if (!floGlobals.hasAgreedToLend)
+                floGlobals.hasAgreedToLend = new Set()
             for (const key in requests) {
                 const { message: { loan_opening_process_id, closing_txid } } = requests[key]
-                floGlobals.loansOpeningInProcess.add(loan_opening_process_id)
+                floGlobals.hasAgreedToLend.add(loan_opening_process_id)
             }
         }
-        function getAllInvolvedAddresses() { // get all addresses involved in loan process (except my address)
-            const addresses = new Set()
-            for (const key in floGlobals.myInbox) {
-                const { message: { borrower, coborrower, lender } } = floGlobals.myInbox[key]
-                if (borrower)
-                    addresses.add(borrower)
-                if (coborrower)
-                    addresses.add(coborrower)
-                if (lender)
-                    addresses.add(lender)
-            }
-            if (addresses.has(floGlobals.myFloID))
-                addresses.delete(floGlobals.myFloID)
-            if (addresses.has(floGlobals.myBtcID))
-                addresses.delete(floGlobals.myBtcID)
-            return addresses
-        }
+        /** 
+         * @param {string} inputString
+        */
         function decodeDateStringToMilliseconds(inputString) {
             // Define a mapping for units to milliseconds (Y: years, M: months, D: days)
             const unitToMilliseconds = {
@@ -1931,22 +1927,18 @@
             return null;
         }
 
-        const processedRequests = new Set()
-        floGlobals.inProcessRequests = {}
-        function processInProcessRequests() {
-            let myLoanRequests = {}
-            for (const key in floGlobals.loanRequests) {
-                const { message: { borrower } } = floGlobals.loanRequests[key]
-                if (floCrypto.isSameAddr(borrower, floGlobals.myFloID)) {
-                    myLoanRequests[key] = floGlobals.loanRequests[key]
-                }
-            }
-            const allMessages = {
-                ...floGlobals.myInbox,
-                ...myLoanRequests,
-                ...floGlobals.myOutbox
-            }
-            for (const key in allMessages) {
+        const completedLoanProcess = new Set()
+        uiGlobals.inProcessRequests = {}
+        uiGlobals.sortedProcesses = []
+        uiGlobals.relatedAddresses = new Set()
+        /** 
+         * @param {Object} newRequests
+         * @param {Object} options
+         * @param {Boolean} options.isInbox
+        */
+        function processInProcessRequests(newRequests = {}, options = {}) {
+            const { isInbox = false, areLoanRequests = false } = options
+            for (const key in newRequests) {
                 const {
                     message: {
                         borrower, coborrower, lender,
@@ -1954,16 +1946,17 @@
                         loan_id, closing_txid, unlock_tx_hex, unlock_collateral_id, type_unlock_collateral_ack
                     } = {},
                     type, time
-                } = allMessages[key];
-                if (processedRequests.has(loan_opening_process_id) || Object.values(btcMortgage.loans).find(loan => loan.loan_opening_process_id === loan_opening_process_id)) {
-                    processedRequests.add(loan_opening_process_id)
-                    continue // Request has been processed
-                }
+                } = newRequests[key];
+                if (borrower && areLoanRequests && !floCrypto.isSameAddr(borrower, floDapps.user.id)) continue // if loan request is not from me, ignore
                 if (loan_id && btcMortgage.loans[loan_id] && btcMortgage.loans[loan_id].close_time)
                     continue // Loan closed
                 if (loan_opening_process_id) {
-                    if (!floGlobals.inProcessRequests[loan_opening_process_id]) {
-                        floGlobals.inProcessRequests[loan_opening_process_id] = {
+                    if (completedLoanProcess.has(loan_opening_process_id) || Object.values(btcMortgage.loans).find(loan => loan.loan_opening_process_id === loan_opening_process_id)) {
+                        completedLoanProcess.add(loan_opening_process_id)
+                        continue // Request has been processed
+                    }
+                    if (!uiGlobals.inProcessRequests[loan_opening_process_id]) {
+                        uiGlobals.inProcessRequests[loan_opening_process_id] = {
                             loanOpeningProcessID: loan_opening_process_id,
                             hasProvidedCollateral: false,
                             hasAgreedToLend: false,
@@ -1972,112 +1965,153 @@
                         }
                     }
                     if (borrower) {
-                        floGlobals.inProcessRequests[loan_opening_process_id].borrower = borrower
-                        floGlobals.inProcessRequests[loan_opening_process_id].isBorrower = floCrypto.isSameAddr(borrower, floDapps.user.id)
+                        uiGlobals.inProcessRequests[loan_opening_process_id].borrower = borrower
+                        uiGlobals.inProcessRequests[loan_opening_process_id].isBorrower = floCrypto.isSameAddr(borrower, floDapps.user.id)
+                        if (isInbox)
+                            uiGlobals.relatedAddresses.add(borrower)
                     }
                     if (coborrower) {
-                        floGlobals.inProcessRequests[loan_opening_process_id].coborrower = coborrower
-                        floGlobals.inProcessRequests[loan_opening_process_id].isCoborrower = floCrypto.isSameAddr(coborrower, floDapps.user.id)
-                    }
-                    if (loan_amount) {
-                        floGlobals.inProcessRequests[loan_opening_process_id].loanAmount = loan_amount
-                    }
-                    if (policy_id) {
-                        floGlobals.inProcessRequests[loan_opening_process_id].policyID = policy_id
+                        uiGlobals.inProcessRequests[loan_opening_process_id].coborrower = coborrower
+                        uiGlobals.inProcessRequests[loan_opening_process_id].isCoborrower = floCrypto.isSameAddr(coborrower, floDapps.user.id)
+                        if (isInbox)
+                            uiGlobals.relatedAddresses.add(coborrower)
                     }
                     if (lender) {
-                        floGlobals.inProcessRequests[loan_opening_process_id].lender = lender
-                        floGlobals.inProcessRequests[loan_opening_process_id].isLender = floCrypto.isSameAddr(lender, floDapps.user.id)
+                        uiGlobals.inProcessRequests[loan_opening_process_id].lender = lender
+                        uiGlobals.inProcessRequests[loan_opening_process_id].isLender = floCrypto.isSameAddr(lender, floDapps.user.id)
+                        if (isInbox)
+                            uiGlobals.relatedAddresses.add(lender)
+                    }
+                    if (loan_amount) {
+                        uiGlobals.inProcessRequests[loan_opening_process_id].loanAmount = loan_amount
+                    }
+                    if (policy_id) {
+                        uiGlobals.inProcessRequests[loan_opening_process_id].policyID = policy_id
                     }
                     if (loan_request_id) {
-                        floGlobals.inProcessRequests[loan_opening_process_id].loanRequestID = loan_request_id
-                        floGlobals.inProcessRequests[loan_opening_process_id].hasProvidedCollateral = true
+                        uiGlobals.inProcessRequests[loan_opening_process_id].loanRequestID = loan_request_id
+                        uiGlobals.inProcessRequests[loan_opening_process_id].hasProvidedCollateral = true
                     }
                     if (collateral_lock_id) {
-                        floGlobals.inProcessRequests[loan_opening_process_id].collateralLockID = collateral_lock_id
+                        uiGlobals.inProcessRequests[loan_opening_process_id].collateralLockID = collateral_lock_id
                     }
                     switch (type) {
                         case 'type_loan_collateral_request':
-                            floGlobals.inProcessRequests[loan_opening_process_id].initiationTime = time
-                            floGlobals.inProcessRequests[loan_opening_process_id].collateralRequestID = key
+                            uiGlobals.inProcessRequests[loan_opening_process_id].initiationTime = time
+                            uiGlobals.inProcessRequests[loan_opening_process_id].collateralRequestID = key
                             break;
                         case 'type_loan_request':
-                            floGlobals.inProcessRequests[loan_opening_process_id].hasProvidedCollateral = true
-                            floGlobals.inProcessRequests[loan_opening_process_id].loanRequestID = key
+                            uiGlobals.inProcessRequests[loan_opening_process_id].hasProvidedCollateral = true
+                            uiGlobals.inProcessRequests[loan_opening_process_id].loanRequestID = key
                             break;
                         case 'type_loan_response':
-                            floGlobals.inProcessRequests[loan_opening_process_id].loanResponseTime = time
-                            floGlobals.inProcessRequests[loan_opening_process_id].hasAgreedToLend = true
-                            floGlobals.inProcessRequests[loan_opening_process_id].loanResponseID = key
+                            uiGlobals.inProcessRequests[loan_opening_process_id].loanResponseTime = time
+                            uiGlobals.inProcessRequests[loan_opening_process_id].hasAgreedToLend = true
+                            uiGlobals.inProcessRequests[loan_opening_process_id].loanResponseID = key
                             break;
                         case "type_collateral_lock_request":
-                            floGlobals.inProcessRequests[loan_opening_process_id].collateralLockRequestID = key
+                            uiGlobals.inProcessRequests[loan_opening_process_id].collateralLockRequestID = key
                             break;
                         case 'type_collateral_lock_ack':
-                            floGlobals.inProcessRequests[loan_opening_process_id].collateralLockAckTime = time
-                            floGlobals.inProcessRequests[loan_opening_process_id].hasLockedCollateral = true
-                            floGlobals.inProcessRequests[loan_opening_process_id].collateralLockAckID = key
+                            uiGlobals.inProcessRequests[loan_opening_process_id].collateralLockAckTime = time
+                            uiGlobals.inProcessRequests[loan_opening_process_id].hasLockedCollateral = true
+                            uiGlobals.inProcessRequests[loan_opening_process_id].collateralLockAckID = key
                             break;
                         case 'type_refund_collateral_request':
-                            floGlobals.inProcessRequests[loan_opening_process_id].hasRequestedCollateralRefund = true
+                            uiGlobals.inProcessRequests[loan_opening_process_id].hasRequestedCollateralRefund = true
                             break;
                     }
-                } else if (closing_txid) {
-                    if (!floGlobals.inProcessRequests[closing_txid])
-                        floGlobals.inProcessRequests[closing_txid] = {
-                            loanID: loan_id,
-                            closingTxID: closing_txid,
-                            hasRequestedCollateralRefund: false,
-                            hasRefundedCollateral: false,
-                            hasPaidLoan: false,
-                            type: 'loanClosing'
+                } else {
+                    if (loan_id) {
+                        if (!uiGlobals.activeLoanQueries[loan_id])
+                            uiGlobals.activeLoanQueries[loan_id] = {
+                                loanID: loan_id,
+                            }
+                        switch (type) {
+                            case 'type_loan_closed_ack':
+                                uiGlobals.activeLoanQueries[loan_id].hasRepaidLoan = true
+                                break;
+                            case 'type_unlock_collateral_request':
+                                uiGlobals.activeLoanQueries[loan_id].hasRequestedCollateralUnlock = true
+                                break;
+                            case 'type_unlock_collateral_ack':
+                                uiGlobals.activeLoanQueries[loan_id].hasRefundedCollateral = true
+                                uiGlobals.activeLoanQueries[loan_id].collateralUnlockAckTime = time
+                                delete uiGlobals.inProcessRequests[closing_txid]
+                                completedLoanProcess.add(closing_txid)
+                                break;
+                            case 'type_liquate_collateral_request':
+                                uiGlobals.activeLoanQueries[loan_id].hasRequestedCollateralLiquidation = true
+                                break;
+                            case 'type_liquate_collateral_ack':
+                                uiGlobals.activeLoanQueries[loan_id].hasLiquidatedCollateral = true
+                                break;
+                            case 'type_pre_liquidate_collateral_request':
+                                uiGlobals.activeLoanQueries[loan_id].hasRequestedCollateralPreLiquidation = true
+                                break;
                         }
-                    const { borrower, coborrower, lender } = btcMortgage.loans[loan_id]
-                    if (borrower) {
-                        floGlobals.inProcessRequests[closing_txid].borrower = borrower
-                        floGlobals.inProcessRequests[closing_txid].isBorrower = floCrypto.isSameAddr(borrower, floDapps.user.id)
                     }
-                    if (coborrower) {
-                        floGlobals.inProcessRequests[closing_txid].coborrower = coborrower
-                        floGlobals.inProcessRequests[closing_txid].isCoborrower = floCrypto.isSameAddr(coborrower, floDapps.user.id)
-                    }
-                    if (lender) {
-                        floGlobals.inProcessRequests[closing_txid].lender = lender
-                        floGlobals.inProcessRequests[closing_txid].isLender = floCrypto.isSameAddr(lender, floDapps.user.id)
-                    }
-                    if (unlock_tx_hex) {
-                        floGlobals.inProcessRequests[closing_txid].unlockTxHex = unlock_tx_hex
-                    }
-                    switch (type) {
-                        case 'type_loan_closed_ack':
-                            floGlobals.inProcessRequests[closing_txid].loanClosedAckTime = time
-                            floGlobals.inProcessRequests[closing_txid].hasPaidLoan = true
-                            break;
-                        case 'type_unlock_collateral_request':
-                            floGlobals.inProcessRequests[closing_txid].unlockCollateralRequestTime = time
-                            floGlobals.inProcessRequests[closing_txid].hasRequestedCollateralUnlock = true
-                            break;
-                        case 'type_unlock_collateral_ack':
-                            floGlobals.inProcessRequests[closing_txid].unlockCollateralAckTime = time
-                            floGlobals.inProcessRequests[closing_txid].hasRefundedCollateral = true
-                            break;
+                    if (closing_txid && !completedLoanProcess.has(closing_txid)) {
+                        if (!uiGlobals.inProcessRequests[closing_txid])
+                            uiGlobals.inProcessRequests[closing_txid] = {
+                                loanID: loan_id,
+                                closingTxID: closing_txid,
+                                hasRequestedCollateralRefund: false,
+                                hasRefundedCollateral: false,
+                                hasPaidLoan: false,
+                                type: 'loanClosing'
+                            }
+                        const { borrower, coborrower, lender } = btcMortgage.loans[loan_id]
+                        if (borrower) {
+                            uiGlobals.inProcessRequests[closing_txid].borrower = borrower
+                            uiGlobals.inProcessRequests[closing_txid].isBorrower = floCrypto.isSameAddr(borrower, floDapps.user.id)
+                            if (isInbox)
+                                uiGlobals.relatedAddresses.add(borrower)
+                        }
+                        if (coborrower) {
+                            uiGlobals.inProcessRequests[closing_txid].coborrower = coborrower
+                            uiGlobals.inProcessRequests[closing_txid].isCoborrower = floCrypto.isSameAddr(coborrower, floDapps.user.id)
+                            if (isInbox)
+                                uiGlobals.relatedAddresses.add(coborrower)
+                        }
+                        if (lender) {
+                            uiGlobals.inProcessRequests[closing_txid].lender = lender
+                            uiGlobals.inProcessRequests[closing_txid].isLender = floCrypto.isSameAddr(lender, floDapps.user.id)
+                            if (isInbox)
+                                uiGlobals.relatedAddresses.add(lender)
+                        }
+                        if (unlock_tx_hex) {
+                            uiGlobals.inProcessRequests[closing_txid].unlockTxHex = unlock_tx_hex
+                        }
+                        switch (type) {
+                            case 'type_loan_closed_ack':
+                                uiGlobals.inProcessRequests[closing_txid].loanClosedAckTime = time
+                                uiGlobals.inProcessRequests[closing_txid].hasPaidLoan = true
+                                break;
+                            case 'type_unlock_collateral_request':
+                                uiGlobals.inProcessRequests[closing_txid].unlockCollateralRequestTime = time
+                                uiGlobals.inProcessRequests[closing_txid].hasRequestedCollateralUnlock = true
+                                break;
+                            case 'type_unlock_collateral_ack':
+                                uiGlobals.inProcessRequests[closing_txid].unlockCollateralAckTime = time
+                                uiGlobals.inProcessRequests[closing_txid].hasRefundedCollateral = true
+                                completedLoanProcess.add(closing_txid)
+                                break;
+                        }
                     }
                 }
             }
-            // .reduce((acc, loan) => { // group by borrower, coborrower and lender
-            //     if (loan.isBorrower)
-            //         acc.borrowing.push(loan)
-            //     else if (loan.isCoborrower)
-            //         acc.coBorrowing.push(loan)
-            //     else if (loan.isLender)
-            //         acc.lending.push(loan)
-            //     return acc
-            // }, {
-            //     borrowing: [],
-            //     coBorrowing: [],
-            //     lending: []
-            // })
+            if (uiGlobals.relatedAddresses.has(floGlobals.myBtcID))
+                uiGlobals.relatedAddresses.delete(floGlobals.myBtcID)
+            if (uiGlobals.relatedAddresses.has(floGlobals.myFloID))
+                uiGlobals.relatedAddresses.delete(floGlobals.myFloID)
+            uiGlobals.sortedProcesses = Object.keys(uiGlobals.inProcessRequests).sort((a, b) => {
+                const aTime = uiGlobals.inProcessRequests[a].initiationTime || uiGlobals.inProcessRequests[a].loanResponseTime || uiGlobals.inProcessRequests[a].loanClosedAckTime || uiGlobals.inProcessRequests[a].unlockCollateralRequestTime;
+                const bTime = uiGlobals.inProcessRequests[b].initiationTime || uiGlobals.inProcessRequests[b].loanResponseTime || uiGlobals.inProcessRequests[b].loanClosedAckTime || uiGlobals.inProcessRequests[b].unlockCollateralRequestTime;
+                return bTime - aTime
+            })
         }
+
 
         function groupLoans() {
             return Object.values(btcMortgage.loans)

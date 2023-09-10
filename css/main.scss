@@ -48,10 +48,6 @@ strong {
   max-width: 65ch;
   line-height: 1.7;
   color: rgba(var(--text-color), 0.9);
-
-  &:not(:last-of-type) {
-    margin-bottom: 1.5rem;
-  }
 }
 a {
   text-decoration: none;

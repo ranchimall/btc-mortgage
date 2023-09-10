@@ -50,10 +50,6 @@ strong {
   line-height: 1.7;
   color: rgba(var(--text-color), 0.9);
 }
-p:not(:last-of-type),
-strong:not(:last-of-type) {
-  margin-bottom: 1.5rem;
-}
 
 a {
   text-decoration: none;
