@@ -437,6 +437,7 @@
                     const loanRequestForm = Component(() => {
                         const [loanAmount, setLoanAmount] = useState(0)
                         const [selfCollateral, setSelfCollateral] = useState(true)
+                        const collateralAmount = btcMortgage.util.calcRequiredCollateral((loanAmount / floGlobals.btcRate), loan_collateral_ratio)
                         useEffect(() => {
                             if (!selfCollateral) {
                                 getRef('collateral_provider').focusIn()
@@ -456,7 +457,7 @@
                                     </div>    
                                 </sm-input>
                                 
-                                <p>Collateral amount: <b>${formatAmount(btcMortgage.util.calcRequiredCollateral((loanAmount / floGlobals.btcRate), loan_collateral_ratio))}</b></p>
+                                <p>Collateral amount: <b>${formatAmount(collateralAmount)}</b> (${formatAmount(collateralAmount * floGlobals.btcRate, 'usd')})</p>
                                 <div class="grid gap-1">
                                     <label class="interact">
                                         <input type="radio" name="collateral_type" value="self" checked=${selfCollateral} onchange=${() => setSelfCollateral(true)} required>
@@ -494,6 +495,7 @@
                 function confirmDetails() {
                     loanAmount = parseFloat(getRef('loan_amount').value.trim())
                     collateralProvider = getRef('collateral_provider') ? getRef('collateral_provider').value.trim() : floGlobals.myBtcID
+                    const collateralAmount = btcMortgage.util.calcRequiredCollateral((loanAmount / floGlobals.btcRate), loan_collateral_ratio)
                     renderElem(getRef('request_loan_content'), html`
                         <div class="grid gap-1-5">
                             <div class="grid gap-0-5">
@@ -502,7 +504,7 @@
                             </div>
                             <div class="grid gap-0-5">
                                 <h5>Collateral amount</h5>
-                                <p>${formatAmount(btcMortgage.util.calcRequiredCollateral((loanAmount / floGlobals.btcRate), loan_collateral_ratio))}</p>
+                                <p>${formatAmount(collateralAmount)} (${formatAmount(collateralAmount * floGlobals.btcRate, 'usd')})</p>
                             </div>
                             <div class="grid gap-0-5">
                                 <h5>Collateral provider</h5>
@@ -647,7 +649,7 @@
                 const {
                     type,
                     loanOpeningProcessID,
-                    borrower, isBorrower, coborrower, isCoborrower, lender, isLender, loanAmount, policyID,
+                    borrower, isBorrower, coborrower, isCoBorrower, lender, isLender, loanAmount, collateral: { rate, quantity } = {}, policyID,
                     initiationTime, loanResponseTime, collateralLockAckTime, loanIssuedTime,
                     hasProvidedCollateral, hasAgreedToLend, hasLockedCollateral, hasIssuedLoan, hasRequestedCollateralRefund,
                     collateralRequestID, loanResponseID, collateralLockRequestID, collateralLockAckID, loanID, closingTxID,
@@ -659,7 +661,7 @@
                         const [verifyingCollateral, setVerifyCollateral] = useState(false)
                         let collateralAmount = 0
                         if (!isLender)
-                            collateralAmount = btcMortgage.util.calcRequiredCollateral((loanAmount / floGlobals.btcRate), btcMortgage.policies[policyID]?.loan_collateral_ratio) || 0
+                            collateralAmount = btcMortgage.util.calcRequiredCollateral((loanAmount / (rate || floGlobals.btcRate)), btcMortgage.policies[policyID]?.loan_collateral_ratio) || 0
                         async function verifyCollateral(e) {
                             const confirmation = await getConfirmation('Verify collateral?', { message: `You are about to check for ${formatAmount(collateralAmount)} as collateral. Continue?`, confirmText: 'Verify', cancelText: 'Cancel' })
                             if (!confirmation)
@@ -736,7 +738,7 @@
                         // check if loan hasn't been issued even after 24 hours of collateral lock
                         let hasLockedCollateralForMoreThan24Hours = false
                         useEffect(() => {
-                            if (isCoborrower && hasLockedCollateral && !hasIssuedLoan) {
+                            if (isCoBorrower && hasLockedCollateral && !hasIssuedLoan) {
                                 const timeDiff = Date.now() - collateralLockAckTime
                                 if (timeDiff > 86400000) {
                                     hasLockedCollateralForMoreThan24Hours = true
@@ -766,7 +768,7 @@
                                 </div>
                                 <div class="grid gap-0-3">
                                     <p>Collateral amount</p>
-                                    <b>${formatAmount(collateralAmount)}</b>
+                                    <p><b>${formatAmount(collateralAmount)}</b> (${formatAmount(collateralAmount * floGlobals.btcRate, 'usd')})</p>
                                 </div>
                                 <div class="grid gap-0-3">
                                     <p>Duration</p>
@@ -799,7 +801,7 @@
                                     ${isBorrower ? html`
                                         <h4 class="loan-process__type">Borrowing</h4>
                                     `: html`
-                                        ${isCoborrower ? html`
+                                        ${isCoBorrower ? html`
                                             <h4 class="loan-process__type">Co-borrowing</h4>
                                         `: html`
                                             <h4 class="loan-process__type">Lending</h4>
@@ -819,7 +821,7 @@
                                                 ${hasProvidedCollateral ? html`
                                                     <time>${getFormattedTime(initiationTime)}</time>
                                                 `: html`
-                                                    ${isCoborrower ? html`
+                                                    ${isCoBorrower ? html`
                                                     <p>Verify that you have <b>${formatAmount(collateralAmount)}</b> as collateral</p>
                                                         <button class="button button--primary margin-right-auto" disabled=${verifyingCollateral} onclick=${verifyCollateral}>
                                                             ${verifyingCollateral ? html`
@@ -881,9 +883,9 @@
                                                 `}
                                             `: html`
                                                 <h4>Waiting for collateral to be locked</h4>
-                                                <p>Collateral is locked in a 2-of-3 multisig address for safe keeping.</p>
-                                                <p>${isCoborrower ? 'You need' : 'Loan co-borrower needs'} to lock collateral before loan can be issued.</p>
-                                                ${hasAgreedToLend && (isBorrower || isCoborrower) ? html`
+                                                <p>Collateral is locked in a 2 of 3 multisig address for safe keeping.</p>
+                                                <p>${isCoBorrower ? 'You need' : 'Loan co-borrower needs'} to lock collateral before loan can be issued.</p>
+                                                ${hasAgreedToLend && (isBorrower || isCoBorrower) ? html`
                                                     ${floCrypto.isSameAddr(borrower, coborrower) ? html`
                                                         <button class="button button--primary margin-right-auto" disabled=${lockingCollateral} onclick=${lockCollateral}>
                                                             ${lockingCollateral ? html`
@@ -946,7 +948,7 @@
                     return Component(() => {
                         const [isRequestingCollateralUnlock, setIsRequestingCollateralUnlock] = useState(false)
                         let failedToUnlockCollateralAfter24Hours = false
-                        if (isCoborrower && hasRequestedCollateralUnlock && !hasRefundedCollateral) {
+                        if (isCoBorrower && hasRequestedCollateralUnlock && !hasRefundedCollateral) {
                             const timeDiff = Date.now() - collateralLockAckTime
                             if (timeDiff > 86400000) {
                                 failedToUnlockCollateralAfter24Hours = true
@@ -1026,7 +1028,7 @@
                                                     <time>${getFormattedTime(unlockCollateralRequestTime)}</time>
                                                 `}
                                             `: html`
-                                                ${isCoborrower ? html`
+                                                ${isCoBorrower ? html`
                                                     <h4>Request collateral refund</h4>
                                                     <button class="button button--primary margin-right-auto" disabled=${isRequestingCollateralUnlock} onclick=${requestCollateralUnlock}>
                                                         ${isRequestingCollateralUnlock ? html`
@@ -1098,7 +1100,7 @@
                     try {
                         const { message: { closing_txid } } = await btcMortgage.repayLoan(loan_id, await floDapps.user.private)
                         notify('Loan repaid successfully', 'success')
-                        if (isCoborrower) {
+                        if (isCoBorrower) {
                             await btcMortgage.requestUnlockCollateral(loan_id, closing_txid, await floDapps.user.private)
                             notify('Collateral refund requested', 'success')
                         }
@@ -1109,7 +1111,7 @@
                     }
                 }
                 const isBorrower = floCrypto.isSameAddr(borrower, floDapps.user.id)
-                const isCoborrower = floCrypto.isSameAddr(coborrower, floDapps.user.id)
+                const isCoBorrower = floCrypto.isSameAddr(coborrower, floDapps.user.id)
                 const isLender = floCrypto.isSameAddr(lender, floDapps.user.id)
                 let loanStatus = '';
                 let loanStatusBadge = '';
@@ -1456,7 +1458,7 @@
                     Promise.allSettled([
                         btcOperator.getBalance(floGlobals.myBtcID),
                         floBlockchainAPI.getBalance(floGlobals.myFloID),
-                        floTokenAPI.getBalance(floGlobals.myFloID, 'rupee')
+                        floTokenAPI.getBalance(floGlobals.myFloID, 'usd')
                     ]).then(result => {
                         const [btcBalance, floBalance, usdBalance] = result.map(({ value }) => value)
                         floGlobals.memoBalance = {
@@ -1972,7 +1974,7 @@
                     }
                     if (coborrower) {
                         uiGlobals.inProcessRequests[loan_opening_process_id].coborrower = coborrower
-                        uiGlobals.inProcessRequests[loan_opening_process_id].isCoborrower = floCrypto.isSameAddr(coborrower, floDapps.user.id)
+                        uiGlobals.inProcessRequests[loan_opening_process_id].isCoBorrower = floCrypto.isSameAddr(coborrower, floDapps.user.id)
                         if (isInbox)
                             uiGlobals.relatedAddresses.add(coborrower)
                     }
@@ -2070,7 +2072,7 @@
                         }
                         if (coborrower) {
                             uiGlobals.inProcessRequests[closing_txid].coborrower = coborrower
-                            uiGlobals.inProcessRequests[closing_txid].isCoborrower = floCrypto.isSameAddr(coborrower, floDapps.user.id)
+                            uiGlobals.inProcessRequests[closing_txid].isCoBorrower = floCrypto.isSameAddr(coborrower, floDapps.user.id)
                             if (isInbox)
                                 uiGlobals.relatedAddresses.add(coborrower)
                         }

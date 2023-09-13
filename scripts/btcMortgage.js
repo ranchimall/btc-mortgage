@@ -9,7 +9,7 @@
     // const BANKER_ID = "FPFeL5PXzW9bGosUjQYCxTHSMHidnygvvd";
     const BANKER_PUBKEY = '03EE0FB1868EE7D03BC741B10CD56057769445C7D37703115E428A93236C714E61';
 
-    const CURRENCY = "rupee";
+    const CURRENCY = "usd";
     const ALLOWED_DEVIATION = 0.98, //ie, upto 2% of decrease in rate can be accepted in processing stage
         WAIT_TIME = 24 * 60 * 60 * 1000;//24 hrs
     const PERIOD_REGEX = /^[1-9]\d{0,4}(Y|M|D)$/,
