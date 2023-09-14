@@ -161,6 +161,14 @@
             popupStack.peek().popup.hide(options)
         }
         // displays a popup for asking permission. Use this instead of JS confirm
+        /**
+        @param {string} title - Title of the popup
+        @param {object} options - Options for the popup 
+        @param {string} options.message - Message to be displayed in the popup
+        @param {string} options.cancelText - Text for the cancel button
+        @param {string} options.confirmText - Text for the confirm button
+        @param {boolean} options.danger - If true, confirm button will be red
+        */
         const getConfirmation = (title, options = {}) => {
             return new Promise(resolve => {
                 const { message = '', cancelText = 'Cancel', confirmText = 'OK', danger = false } = options
@@ -566,7 +574,7 @@
             },
             loanRequest(requestId, details) {
                 const { message: { borrower, coborrower, collateral: { btc_id, quantity, rate }, loan_amount, loan_collateral_req_id, loan_opening_process_id, policy_id }, vectorClock } = details;
-                const { duration, interest } = btcMortgage.policies[policy_id];
+                const { duration, interest } = btcMortgage.policies[policy_id] || {};
                 const isRequester = floCrypto.isSameAddr(borrower, floGlobals.myFloID) || floCrypto.isSameAddr(coborrower, floGlobals.myFloID)
                 const [isLending, setIsLending] = useState(false)
                 async function startLendingProcess() {
@@ -1537,18 +1545,166 @@
                                 return html``
                         }
                     })
+                    const [bankerView, setBankerView] = useState(wildcards[0] || 'inbox')
+                    function handleChange(e) {
+                        history.pushState(null, null, `#/home/${e.target.value}`)
+                        setBankerView(e.target.value)
+                    }
+                    const [duration, setDuration] = useState(0)
+                    const [durationUnit, setDurationUnit] = useState('Y')
+                    let durationUnitInput
+                    switch (durationUnit) {
+                        case 'D':
+                            durationUnitInput = html`
+                                <sm-select id="policy_duration" required>
+                                    ${[...Array(31)].map((_, i) => html`
+                                        <sm-option value=${i + 1}>${i + 1}</sm-option>
+                                    `)}
+                                </sm-select>
+                            `
+                            break;
+                        case 'M':
+                        case 'Y':
+                            durationUnitInput = html` <sm-input id="policy_duration" class="flex-1" type="number" min="1" max="100" error-text="Must be between 1-100" required></sm-input> `
+                            break;
+                    }
+                    const [isCreatingPolicy, setIsCreatingPolicy] = useState(false)
+                    async function createPolicy() {
+                        const interestRate = parseFloat(getRef('policy_interest_rate').value.trim())
+                        const duration = parseInt(getRef('policy_duration').value.trim())
+                        const collateralRatio = parseFloat(getRef('loan_to_collateral_ratio').value.trim())
+                        const preLiquidateCollateralThreshold = parseFloat(getRef('policy_pre_liquidation_threshold').value.trim()) || null
+                        const confirmation = await getConfirmation('Create policy?', {
+                            message: `
+                                You are about to create a new policy with the following details: \n
+                                Interest rate: ${interestRate}% \n
+                                Duration: ${duration} ${durationUnit} \n
+                                Collateral ratio: ${collateralRatio}% \n
+                                ${preLiquidateCollateralThreshold ? `Pre-liquidation threshold: ${preLiquidateCollateralThreshold}% \n` : ''}
+                            `,
+                            confirmText: 'Create',
+                        })
+                        if (!confirmation) return
+                        try {
+                            setIsCreatingPolicy(true)
+                            const txid = await btcMortgage.writePolicy(await floDapps.user.private, `${duration}${durationUnit}`, interestRate, preLiquidateCollateralThreshold, collateralRatio)
+                            notify('Policy created. May take 20 Mins to be visible in policy list.', 'success')
+                            getRef('create_policy_form').reset()
+                        } catch (error) {
+                            notify(error.message || error, 'error')
+                        } finally {
+                            setIsCreatingPolicy(false)
+                        }
+                    }
+                    function policyCard(policyId, details = {}) {
+                        const { duration, interest, loan_collateral_ratio, policy_creation_time, pre_liquidation_threshold } = details
+                        return html`
+                            <li class="grid gap-1-5" style="background-color: rgba(var(--foreground-color),1); padding: 1rem; border-radius: 0.5rem;">
+                                <p>${getFormattedTime(policy_creation_time)}</p>
+                                <div class="flex flex-wrap gap-1-5">
+                                    <div class="grid gap-0-3">
+                                        <p>Interest rate</p>
+                                        <b>${interest * 100}%</b>
+                                    </div>
+                                    <div class="grid gap-0-3">
+                                        <p>Duration</p>
+                                        <b>${duration}</b>
+                                    </div>
+                                    <div class="grid gap-0-3">
+                                        <p>Loan to collateral ratio</p>
+                                        <b>${loan_collateral_ratio * 100}%</b>
+                                    </div>
+                                    ${pre_liquidation_threshold ? html`
+                                        <div class="grid gap-0-3">
+                                            <p>Pre-liquidation threshold</p>
+                                            <b>${pre_liquidation_threshold * 100}%</b>
+                                        </div>
+                                    `: ''}
+                                </div>
+                                <a href=${`https://blockbook.ranchimall.net/tx/${policyId}`} target="_blank" class="button button--small button--colored margin-left-auto">Check on blockchain</a>
+                            </li>    
+                        `
+                    }
+                    const policies = Object.entries(btcMortgage.policies)
+                        .sort((a, b) => b[1].policy_creation_time - a[1].policy_creation_time)
+                        .map(([policyId, policyDetails]) => policyCard(policyId, policyDetails))
                     return html`
-                        <section class="grid gap-1">
-                            <h3>Banker Inbox</h3>
-                            ${requests.length ? html`
-                                <ul id="banker_inbox_list">
-                                    ${requests}
+                        <section class=${`grid gap-1 ${bankerView}`}>
+                            <sm-chips onchange=${handleChange}>
+                                <sm-chip value="inbox" selected=${bankerView === 'inbox'}>
+                                    Inbox
+                                    ${requests.length ? html`<span class="badge">${requests.length}</span>` : ''}
+                                </sm-chip>
+                                <sm-chip value="create-policy" selected=${bankerView === 'create-policy'}>
+                                    Create policy
+                                </sm-chip>
+                                <sm-chip value="policies" selected=${bankerView === 'policies'}>
+                                    Policies
+                                </sm-chip>
+                            </sm-chips>
+                            ${bankerView === 'inbox' ? html`
+                                <h3>Banker Inbox</h3>
+                                ${requests.length ? html`
+                                    <ul id="banker_inbox_list">
+                                        ${requests}
+                                    </ul>
+                                `: html` <strong> No requests </strong> `}
+                            `: ``}
+                            ${bankerView === 'policies' ? html`
+                                <h3>Policies</h3>
+                                <ul class="grid gap-1">
+                                    ${policies}
                                 </ul>
-                            `: html`
-                                <strong>
-                                    No requests
-                                </strong>
-                            `}
+                            `: ''}
+                            ${bankerView === 'create-policy' ? html`
+                                <h3>Create policy</h3>
+                                <sm-form id="create_policy_form">
+                                    <div class="grid gap-0-5">
+                                        <p>Interest rate (%)</p>
+                                        <sm-input id="policy_interest_rate" type="number" min="1" max="100" step="0.01" error-text="Must be between 1-100" required></sm-input>
+                                    </div>
+                                    <div class="grid gap-0-5">
+                                        <p>Duration</p>
+                                        <div class="flex gap-0-5">
+                                            ${durationUnitInput}
+                                            <sm-select onchange=${e => setDurationUnit(e.target.value)} required>
+                                                <sm-option value="D" selected=${durationUnit === 'D'}>Days</sm-option>
+                                                <sm-option value="M" selected=${durationUnit === 'M'}>Months</sm-option>
+                                                <sm-option value="Y" selected=${durationUnit === 'Y'}>Years</sm-option>
+                                            </sm-select>
+                                        </div>
+                                    </div>
+                                    <div class="grid gap-0-5">
+                                        <div class="flex align-center tooltip gap-0-3">
+                                            <p>Loan to collateral ratio (%)</p>
+                                            <svg class="icon" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
+                                            <p class="tooltip__content">
+                                                The percentage of collateral value that can be borrowed. <br>
+                                                e.g. 50% means 1 BTC collateral can be borrowed as 0.5 BTC worth of USD tokens.
+                                            </p>
+                                        </div>
+                                        <sm-input id="loan_to_collateral_ratio" type="number" min="1" max="100" step="0.01" error-text="Must be between 1-100" required></sm-input>
+                                    </div>
+                                    <div class="grid gap-0-5">
+                                        <div class="flex align-center tooltip gap-0-3">
+                                            <p>Pre-liquidation threshold (%) (Optional)</p>
+                                            <svg class="icon" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
+                                            <p class="tooltip__content">
+                                                If the collateral value falls below this threshold, the collateral can be liquidated. <br>
+                                                This is an optional field.
+                                            </p>
+                                        </div>
+                                        <sm-input id="policy_pre_liquidation_threshold" type="number" min="1" max="100" step="0.01" error-text="Must be between 1-100"></sm-input>
+                                    </div>
+                                    ${isCreatingPolicy ? html`
+                                        <button class="button button--primary" type="submit" disabled=${true}>
+                                            Creating <sm-spinner class="margin-left-0-5"></sm-spinner>
+                                        </button>
+                                    `: html`
+                                        <button class="button button--primary" type="submit" onclick=${createPolicy} disabled="true">Create</button>
+                                    `}    
+                                </sm-form>
+                            `: ''}
                         </section>
                     `
                 })
@@ -2063,7 +2219,7 @@
                                 hasPaidLoan: false,
                                 type: 'loanClosing'
                             }
-                        const { borrower, coborrower, lender } = btcMortgage.loans[loan_id]
+                        const { borrower, coborrower, lender } = btcMortgage.loans[loan_id] || {}
                         if (borrower) {
                             uiGlobals.inProcessRequests[closing_txid].borrower = borrower
                             uiGlobals.inProcessRequests[closing_txid].isBorrower = floCrypto.isSameAddr(borrower, floDapps.user.id)

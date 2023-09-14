@@ -544,6 +544,30 @@ h3 {
   display: none;
 }
 
+.tooltip {
+  position: relative;
+  cursor: pointer;
+  isolation: isolate;
+}
+.tooltip:hover .tooltip__content {
+  opacity: 1;
+  pointer-events: auto;
+}
+.tooltip__content {
+  pointer-events: none;
+  position: absolute;
+  opacity: 0;
+  top: 100%;
+  justify-self: center;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  background-color: rgba(var(--text-color), 0.8);
+  color: rgba(var(--background-color), 1);
+  font-size: 0.8rem;
+  transition: opacity 0.2s;
+  z-index: 1;
+}
+
 #confirmation_popup,
 #prompt_popup {
   flex-direction: column;
@@ -909,6 +933,16 @@ h3 {
   margin-top: auto;
 }
 
+#create_policy_form {
+  padding: 1rem;
+  width: min(24rem, 100%);
+  border-radius: 0.5rem;
+  background-color: rgba(var(--foreground-color), 1);
+}
+#create_policy_form sm-select {
+  height: 3.2rem;
+  flex: 1;
+}
 @media screen and (max-width: 40rem) {
   theme-toggle {
     order: 2;
