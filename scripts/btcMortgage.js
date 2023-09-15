@@ -1440,7 +1440,7 @@
     }
 
     // L: request T (banker) to liquidate collateral due to failure of repayment by borrower
-    btcMortgage.requestBanker.liquateCollateral = function (loan_id, privKey) {
+    btcMortgage.requestBanker.liquidateCollateral = function (loan_id, privKey) {
         return new Promise((resolve, reject) => {
             let lender_pubKey = floDapps.user.public;
             getLoanDetails(loan_id).then(loan_details => {
@@ -1467,7 +1467,7 @@
         })
     }
 
-    btcMortgage.banker.liquateCollateral = function (collateral_liquate_req_id, privKey) {
+    btcMortgage.banker.liquidateCollateral = function (collateral_liquate_req_id, privKey) {
         return new Promise((resolve, reject) => {
             validate_liquateCollateral_request(collateral_liquate_req_id).then(result => {
                 let { loan_details, liquidate_tx_hex, btc_liquid_rate, liquidation_sign } = result;

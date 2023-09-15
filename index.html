@@ -554,19 +554,33 @@
                     <li class="policy" .dataset=${{ policyId }}>
                         <div class="grid gap-0-3">
                             <h5>Duration</h5>
-                            <p>${duration}</p>
+                            <b>${duration}</b>
                         </div>
                         <div class="grid gap-0-3">
                             <h5>Interest</h5>
-                            <p>${interest * 100}% p.a</p>
+                            <b>${interest * 100}% p.a</b>
                         </div>
                         <div class="grid gap-0-3">
-                            <h5>Collateral required</h5>
-                            <p>${parseFloat((1 / loan_collateral_ratio).toFixed(2))}x</p>
+                            <div class="flex gap-0-3 tooltip">
+                                <h5>Collateral required</h5>
+                                <svg class="icon" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
+                                <p class="tooltip__content">
+                                    This shows the multiple of collateral required for the loan amount. <br>
+                                    For example, if the collateral ratio is 1.5x, then for a loan of $100, you need to provide collateral worth $150.  
+                                </p>
+                            </div> 
+                            <b>${parseFloat((1 / loan_collateral_ratio).toFixed(2))}x</b>
                         </div>
                         <div class="grid gap-0-3">
-                            <h5>Pre-liquidation threshold</h5>
-                            <p>${pre_liquidation_threshold ? `${pre_liquidation_threshold * 100}%` : 'None'}</p>
+                            <div class="flex gap-0-3 tooltip">
+                                <h5>Pre-liquidation threshold</h5>
+                                <svg class="icon" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
+                                <p class="tooltip__content">
+                                    This percentage is which the collateral value should not fall below.<br>
+                                    If so happens, the collateral will be liquidated and the loan will be closed.
+                                </p>
+                            </div>
+                            <b>${pre_liquidation_threshold ? `${pre_liquidation_threshold * 100}%` : 'None'}</b>
                         </div>
                         <button class="button button--colored" onclick=${initLoanRequestProcess}>Request loan</button>
                     </li>    
@@ -1158,7 +1172,7 @@
                         return;
                     setIsClaimingCollateral(true)
                     try {
-                        await btcMortgage.requestBanker.liquateCollateral(loan_id, await floDapps.user.private)
+                        await btcMortgage.requestBanker.liquidateCollateral(loan_id, await floDapps.user.private)
                         notify('Collateral claim request sent successfully', 'success')
                     } catch (err) {
                         notify(err, 'error')
@@ -1527,23 +1541,110 @@
             })
             if (floCrypto.isSameAddr(btcMortgage.banker.id, floDapps.user.id)) {
                 const bankerInbox = Component(() => {
+                    const [isProcessingBankerRequest, setIsProcessingBankerRequest] = useState(false)
+                    async function processBankerRequest(requestId) {
+                        const {
+                            message: {
+                                loan_id, closing_txid, unlock_tx_hex,
+                                borrower, coborrower, lender
+                            },
+                            time,
+                            vectorClock,
+                            note,
+                            type
+                        } = floGlobals.bankerRequests[requestId];
+                        try {
+                            setIsProcessingBankerRequest(true)
+                            switch (type) {
+                                case 'type_unlock_collateral_request': {
+                                    const confirmation = await getConfirmation('Process collateral unlock request?', {
+                                        confirmText: 'Process',
+                                    })
+                                    if (!confirmation) return;
+                                    await btcMortgage.unlockCollateral(loan_id, closing_txid, unlock_tx_hex, await floDapps.user.private)
+                                    notify('Collateral unlocked', 'success')
+                                } break;
+                                case 'type_refund_collateral_request': {
+                                    const confirmation = await getConfirmation('Process collateral refund request?', {
+                                        confirmText: 'Process',
+                                    })
+                                    if (!confirmation) return
+                                    await btcMortgage.banker.refundCollateral(vectorClock, borrower, coborrower, lender, await floDapps.user.private)
+                                    notify('Collateral refund processed', 'success')
+                                } break;
+                                case 'type_liquate_collateral_request': {
+                                    const confirmation = await getConfirmation('Process collateral liquidation request?', {
+                                        confirmText: 'Process',
+                                    })
+                                    if (!confirmation) return
+                                    await btcMortgage.banker.liquidateCollateral(vectorClock, await floDapps.user.private)
+                                    notify('Collateral liquidated', 'success')
+                                } break;
+                                case 'type_pre_liquidate_collateral_request': {
+                                    const confirmation = await getConfirmation('Process pre-liquidation request?', {
+                                        confirmText: 'Process',
+                                    })
+                                    if (!confirmation) return
+                                    await btcMortgage.requestBanker.preLiquidateCollateral(loan_id, await floDapps.user.private)
+                                    notify('Pre-liquidation processed', 'success')
+                                } break;
+                            }
+                            await floCloudAPI.noteApplicationData(vectorClock, 'processed')
+                            renderHome()
+                        } catch (error) {
+                            notify(error.message || error, 'error')
+                        } finally {
+                            setIsProcessingBankerRequest(false)
+                        }
+                    }
                     const requests = Object.entries(floGlobals.bankerRequests || {}).map(([requestId, requestDetails]) => {
-                        switch (requestDetails.type) {
+                        const {
+                            message: {
+                                borrower, coborrower, lender
+                            },
+                            time,
+                            vectorClock,
+                            type
+                        } = requestDetails;
+                        let requestTitle
+                        switch (type) {
                             case 'type_unlock_collateral_request':
-
+                                requestTitle = 'Collateral unlock request'
                                 break;
                             case 'type_refund_collateral_request':
-
-                                break;
+                                requestTitle = 'Collateral refund request'
                             case 'type_liquate_collateral_request':
-
+                                requestTitle = 'Collateral liquidation request'
                                 break;
                             case 'type_pre_liquidate_collateral_request':
-
+                                requestTitle = 'Pre-liquidation request'
                                 break;
-                            default:
-                                return html``
                         }
+                        return html`
+                            <li class="grid gap-1 banker-request">
+                                <p>${getFormattedTime(time)}</p>
+                                <h4>${requestTitle}</h4>
+                                <div class="grid gap-0-5">
+                                    <p>Borrower</p>
+                                    <sm-copy value=${borrower}></sm-copy>
+                                </div>
+                                <div class="grid gap-0-5">
+                                    <p>Co-borrower</p>
+                                    <sm-copy value=${coborrower}></sm-copy>
+                                </div>
+                                <div class="grid gap-0-5">
+                                    <p>Lender</p>
+                                    <sm-copy value=${lender}></sm-copy>
+                                </div>
+                                <button class="button button--primary" onclick=${() => processBankerRequest(vectorClock)} disabled=${isProcessingBankerRequest}>
+                                    ${isProcessingBankerRequest ? html`
+                                        Processing <sm-spinner class="margin-left-0-5"></sm-spinner>
+                                    `: html`
+                                        Process
+                                    `}
+                                </button>
+                            </li>
+                        `
                     })
                     const [bankerView, setBankerView] = useState(wildcards[0] || 'inbox')
                     function handleChange(e) {
@@ -1943,10 +2044,10 @@
                                             case 'type_liquate_collateral_ack':
                                             case 'type_pre_liquidate_collateral_request':
                                             case 'type_preLiquidate_collateral_ack':
-                                                floGlobals.bankerRequests = {
-                                                    ...(floGlobals.bankerRequests || {}),
-                                                    [key]: d[key]
-                                                };
+                                                if (!floGlobals.bankerRequests)
+                                                    floGlobals.bankerRequests = {}
+                                                if (!d[key].note) // if note is not present, it means the request is not processed yet
+                                                    floGlobals.bankerRequests[key] = d[key]
                                                 break;
                                         }
                                     }

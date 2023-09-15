@@ -520,6 +520,7 @@ h3 {
   cursor: pointer;
   isolation: isolate;
   &:hover {
+    z-index: 10;
     .tooltip__content {
       opacity: 1;
       pointer-events: auto;
@@ -537,7 +538,8 @@ h3 {
     color: rgba(var(--background-color), 1);
     font-size: 0.8rem;
     transition: opacity 0.2s;
-    z-index: 1;
+    z-index: 10;
+    backdrop-filter: blur(0.5rem);
   }
 }
 #confirmation_popup,
@@ -727,7 +729,7 @@ h3 {
       font-weight: 400;
       color: rgba(var(--text-color), 0.8);
     }
-    p {
+    b {
       font-size: 1.1rem;
       font-weight: 500;
     }
@@ -898,8 +900,10 @@ h3 {
     height: 3.2rem;
     flex: 1;
   }
-  .button {
-  }
+}
+.banker-request {
+  padding: max(1rem, 1.5vw);
+  border-radius: 0.5rem;
 }
 @media screen and (max-width: 40rem) {
   theme-toggle {
