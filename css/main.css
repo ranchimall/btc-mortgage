@@ -15,7 +15,7 @@ body {
 }
 
 body {
-  --accent-color: #365eff;
+  --accent-color: #596afb;
   --text-color: 30, 30, 30;
   --background-color: 248, 248, 248;
   --foreground-color: 255, 255, 255;
@@ -29,7 +29,7 @@ body {
 }
 
 body[data-theme=dark] {
-  --accent-color: #86afff;
+  --accent-color: #b1b9ff;
   --text-color: 220, 220, 220;
   --background-color: 10, 10, 10;
   --foreground-color: 24, 24, 24;
@@ -725,7 +725,7 @@ h3 {
   min-height: 100dvh;
 }
 .landing__section:nth-of-type(2) .section__sub-header {
-  color: #596afb;
+  color: var(--accent-color);
 }
 .landing__section:nth-of-type(2) ol {
   margin-top: 1rem;
@@ -735,14 +735,14 @@ h3 {
   margin-bottom: 2.5rem;
 }
 .landing__section:nth-of-type(2) ol li::marker {
-  color: #596afb;
+  color: var(--accent-color);
   font-weight: 700;
 }
 .landing__section:nth-of-type(2) ol li h4 {
   margin-bottom: 0.5rem;
 }
 .landing__section:nth-of-type(2) .landing__section__image-wrapper {
-  background-color: #bac1ff;
+  background-color: #ffe4ba;
 }
 
 #hero_section {
