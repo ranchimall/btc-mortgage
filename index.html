@@ -453,7 +453,7 @@
                                 getRef('request_loan_content').querySelector('[data-address]').customValidation = (value) => {
                                     return {
                                         isValid: floCrypto.validateAddr(value),
-                                        errorText: 'Invalid address'
+                                        errorText: `Invalid address.<br> It usually starts with "F", "1", "3" or "bc1".`
                                     }
                                 }
                             }
@@ -1368,7 +1368,12 @@
                     } else
                         elem.textContent = floGlobals.myBtcID
                 })
-                document.querySelectorAll('sm-input[data-address]').forEach(input => input.customValidation = floCrypto.validateAddr)
+                document.querySelectorAll('sm-input[data-address]').forEach(input => input.customValidation = (value) => {
+                    return {
+                        isValid: floCrypto.validateAddr(value),
+                        errorText: `Invalid address.<br> It usually starts with "F", "1", "3" or "bc1".`
+                    }
+                })
             }
         })
         router.addRoute('loading', (state) => {
@@ -1469,12 +1474,17 @@
         router.addRoute('sign_in', (state) => {
             renderElem(getRef('app_body'), html`
                 <article id="sign_in">
-                    <section>
-                        <h1 style="font-size: 2rem;">Sign in</h1>
-                        <p>Welcome back, glad to see you again</p>
+                    <section class="grid gap-1-5">
+                        <button onclick="history.back()" class="button button--colored icon-only margin-right-auto">
+                            <svg class="icon" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>    
+                        </button>
+                        <div class="grid gap-0-5">
+                            <h1 style="font-size: 2rem;">Sign in</h1>
+                            <p>Welcome back, glad to see you again</p>
+                        </div>
                         <sm-form id="sign_in_form">
                             <sm-input id="private_key_field" class="password-field" type="password"
-                                placeholder=${`${floGlobals.isPrivKeySecured ? 'Password' : 'FLO/BTC private key'}`} error-text="Private key is invalid" required>
+                                placeholder=${`${floGlobals.isPrivKeySecured ? 'Password' : 'BTC / FLO private key'}`} error-text="Private key is invalid" required>
                                 <label slot="right" class="interact">
                                     <input type="checkbox" class="hidden" autocomplete="off" readonly
                                         onchange="togglePrivateKeyVisibility(this)">
@@ -1485,7 +1495,7 @@
                             <button id="sign_in_button" onclick="handleSignIn()" class="button button--primary" type="submit" disabled>Sign in</button>
                         </sm-form>
                         <p>
-                            New here? <a href="#/sign_up">get your FLO login credentials</a>
+                            New here? <a href="#/sign_up">get your login credentials</a>
                         </p>
                     </section>
                 </article>
@@ -1493,7 +1503,8 @@
             if (!floGlobals.isPrivKeySecured)
                 getRef('private_key_field').customValidation = (value) => {
                     return {
-                        isValid: floCrypto.getPubKeyHex(value)
+                        isValid: floCrypto.getPubKeyHex(value),
+                        errorText: `Invalid private key.<br> It's a long string of random characters usually starting with 'L' or 'R'.`
                     }
                 };
             getRef('private_key_field').focusIn();
@@ -1504,11 +1515,39 @@
             router.routeTo('loading');
         }
         router.addRoute('sign_up', (state) => {
-            const { floID, privKey } = floCrypto.generateNewID()
+            function renderCred(type = 'flo') {
+                let address, privateKey
+                if (type === 'flo') {
+                    ({ floID: address, privKey: privateKey } = floCrypto.generateNewID())
+                } else if (type === 'btc') {
+                    ({ bech32Address: address, wif: privateKey } = btcOperator.newKeys)
+                } else {
+                    throw new Error('Invalid type')
+                }
+                renderElem(getRef('generated_keys_wrapper'), html`
+                    <div class="grid gap-0-5">
+                        <h5>${type.toUpperCase()} address</h5>
+                        <sm-copy id="generated_flo_address" value=${address}></sm-copy>
+                    </div>
+                    <div class="grid gap-0-5">
+                        <h5>Private key</h5>
+                        <sm-copy id="generated_private_key" value=${privateKey}></sm-copy>
+                    </div>
+                `)
+            }
             renderElem(getRef('app_body'), html`
                 <article id="sign_up">
                     <section class="grid gap-1-5">
-                        <div id="flo_id_warning" class="flex gap-1">
+                        <div class="flex align-center space-between gap-1">
+                            <button onclick="history.back()" class="button button--colored icon-only margin-right-auto">
+                                <svg class="icon" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>    
+                            </button>
+                            <sm-chips onchange=${(e) => renderCred(e.target.value)}>
+                                <sm-chip value="btc" selected="true">BTC</sm-chip>
+                                <sm-chip value="flo">FLO</sm-chip>
+                            </sm-chips>
+                        </div>
+                        <div id="generated_keys_warning" class="flex gap-1">
                             <svg class="icon" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"> <path d="M0 0h24v24H0z" fill="none" /> <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z" /> </svg>
                             <div class="grid gap-0-5">
                                 <strong>
@@ -1517,21 +1556,13 @@
                                 <p>Don't share with anyone. Once lost private key can't be recovered.</p>
                             </div>
                         </div>
-                        <div class="grid gap-1-5 generated-keys-wrapper">
-                            <div class="grid gap-0-5">
-                                <h5>FLO address</h5>
-                                <sm-copy id="generated_flo_address" value=${floID}></sm-copy>
-                            </div>
-                            <div class="grid gap-0-5">
-                                <h5>Private key</h5>
-                                <sm-copy id="generated_private_key" value=${privKey}></sm-copy>
-                            </div>
-                        </div>
+                        <div id="generated_keys_wrapper" class="grid gap-1-5"></div>
                         <button id="sign_up_button" onclick="handleSignUp()" class="button button--primary w-100">Sign in with these credentials</button>
-                        <p class="margin-top-1">You can use these FLO credentials with other RanchiMall apps too. </p>
+                        <p class="margin-top-1">You can use these credentials with other RanchiMall apps too. </p>
                     </section>
                 </article>
             `);
+            renderCred('btc')
         })
         let isShowingFloID = false;
         const btcAddresses = {}

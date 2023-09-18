@@ -95,6 +95,7 @@ button:not(:disabled),
 .button--primary {
   color: rgba(var(--background-color), 1);
   background-color: var(--accent-color);
+  padding: 0.8rem 1rem;
 }
 .button--primary .icon {
   fill: rgba(var(--background-color), 1);
@@ -660,21 +661,27 @@ h3 {
 #sign_up section {
   width: min(26rem, 100%);
 }
-#sign_in sm-form,
-#sign_up sm-form {
-  margin: 2rem 0;
+
+#sign_in section {
+  background-color: rgba(var(--foreground-color), 1);
+  border-radius: 1rem;
+  padding: max(1rem, 2vw);
+  box-shadow: 0 0.5rem 1rem rgba(var(--text-color), 0.1);
 }
 
-.generated-keys-wrapper {
+#generated_keys_wrapper {
   padding: 1rem;
   background-color: rgba(var(--foreground-color), 1);
   border-radius: 0.5rem;
 }
 
-#flo_id_warning {
-  padding-bottom: 1.5rem;
+#generated_keys_warning {
+  border: solid thin rgba(var(--text-color), 0.3);
+  background-color: rgba(var(--text-color), 0.03);
+  padding: 1rem;
+  border-radius: 0.5rem;
 }
-#flo_id_warning .icon {
+#generated_keys_warning .icon {
   height: 3rem;
   width: 3rem;
   padding: 0.8rem;
