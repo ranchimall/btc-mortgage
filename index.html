@@ -268,8 +268,18 @@
                         this.routingStart(this.state)
                     }
                     if (this.routes[page]) {
-                        await this.routes[page](this.state)
-                        this.lastPage = page
+                        // Fallback for browsers that don't support View transition API:
+                        if (!document.startViewTransition) {
+                            await this.routes[page](this.state)
+                            this.lastPage = page
+                            return;
+                        }
+
+                        // With a transition:
+                        document.startViewTransition(async () => {
+                            await this.routes[page](this.state)
+                            this.lastPage = page
+                        });
                     } else {
                         if (this.routes['404']) {
                             this.routes['404'](this.state);
@@ -1312,11 +1322,7 @@
         // routing logic
         const router = new Router({
             routingStart(state) {
-                const { page } = state
-                if ("scrollRestoration" in history) {
-                    history.scrollRestoration = "manual";
-                }
-                window.scrollTo(0, 0);
+                const { page } = state;
                 if (floGlobals.myFloID && !getRef('main_header')) {
                     renderElem(getRef('app_body'), html`
                         <header id="main_header">

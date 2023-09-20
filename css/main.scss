@@ -1098,3 +1098,37 @@ h3 {
 .hidden {
   display: none !important;
 }
+
+::view-transition-old(root) {
+  animation: slide-up-out 0.3s both;
+}
+::view-transition-new(root) {
+  animation: slide-up-in-place 0.3s both;
+}
+@keyframes slide-up-in-place {
+  from {
+    opacity: 0;
+    transform: translateY(1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes slide-up-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-1rem);
+  }
+}
+@media (prefers-reduced-motion) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
