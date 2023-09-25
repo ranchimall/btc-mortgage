@@ -621,6 +621,7 @@ h3 {
 #main_header {
   grid-area: header;
   background-color: rgba(var(--foreground-color), 1);
+  view-transition-name: header;
 }
 
 #sub_page_container {

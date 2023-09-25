@@ -2059,7 +2059,7 @@
             const loanApplication = Component(() => {
                 return html`
                     <article id="apply_loan" class="grid gap-1">
-                        <a href="#/home" class="button button--colored button--small margin-right-auto">Back</a>
+                        <button class="button button--colored button--small margin-right-auto" onclick=${() => history.back()}>Back</button>
                         <h1>Select a policy</h1>
                         <ul id="policy_list" class="grid gap-1">
                             ${Object.entries(btcMortgage.policies).map(([policyId, policyDetails]) => render.policy(policyId, policyDetails))}
